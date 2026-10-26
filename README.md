@@ -151,7 +151,7 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 
 ## Troubleshooting
 
-- **Warnings about `flash-attn` or `SoX could not be found` when starting**: these are harmless. Qwen3-TTS works without either.
+- **`'sox' is not recognized`, `SoX could not be found` or a `flash-attn` warning**: harmless, Qwen3-TTS works without either. The Studio and server hide these now; if you still see them, update to the latest version.
 - **"Your GPU ran out of memory"**: the Studio and server each load a model. On cards under about 12 GB, close the server while designing voices, or click **Free GPU memory** in either app.
 - **Installer says the GPU was found but PyTorch can't use it**: update your NVIDIA driver from nvidia.com, then run `install.bat` again.
 - **Silence, noise or errors when generating on an older card (GTX 10/16 or RTX 20 series)**: set `"dtype": "float32"` in `settings.json`.

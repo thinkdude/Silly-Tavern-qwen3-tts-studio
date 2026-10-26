@@ -12,6 +12,7 @@
 #   -Cpu               install without GPU support (very slow, for testing only)
 #   -Fresh             always install a private PyTorch, even if one could be reused
 #   -UsePython <path>  reuse PyTorch from this python.exe (e.g. a conda env or another app's venv)
+#   -KeepCache         keep the download caches instead of deleting them at the end
 
 param(
     [switch]$Yes,
@@ -20,7 +21,8 @@ param(
     [switch]$Reset,
     [switch]$Cpu,
     [switch]$Fresh,
-    [string]$UsePython
+    [string]$UsePython,
+    [switch]$KeepCache
 )
 
 $ErrorActionPreference = 'Stop'
@@ -332,6 +334,23 @@ if ($SkipModels) {
     $dlArgs = @('-m', 'app.download_models')
     if ($AllModels) { $dlArgs += '--all' }
     Run $py $dlArgs 'Downloading models'
+}
+
+# --- 7. Clean up -------------------------------------------------------------------
+# The caches only speed up re-installs; the venv is a full copy (UV_LINK_MODE=copy),
+# so deleting them is safe and frees several GB.
+if (-not $KeepCache) {
+    Step 'Cleaning up download caches'
+    $caches = @((Join-Path $Root '.cache\uv'), (Join-Path $env:HF_HOME 'xet'))
+    $freed = 0
+    foreach ($d in $caches) {
+        if (Test-Path $d) {
+            $freed += (Get-ChildItem $d -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+        }
+    }
+    Run $uv @('cache', 'clean') 'Cleaning the package cache'
+    if (Test-Path $caches[1]) { Remove-Item -Recurse -Force $caches[1] -ErrorAction SilentlyContinue }
+    Info ('Freed {0:N1} GB' -f ($freed / 1GB))
 }
 
 Write-Host ''

@@ -7,6 +7,7 @@ Usage:  python -m app.download_models            # the models settings.json uses
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 
 from .config import CLONE_MODEL_LARGE, CLONE_MODEL_SMALL, MODELS_DIR, load_settings, local_model_dir, setup_environment
@@ -18,6 +19,27 @@ def download(repo_id: str) -> None:
     target = local_model_dir(repo_id)
     print(f"\n--- {repo_id} -> {target}", flush=True)
     snapshot_download(repo_id=repo_id, local_dir=str(target))
+
+
+def is_downloaded(repo_id: str) -> bool:
+    d = local_model_dir(repo_id)
+    return (d / "config.json").exists() and any(d.glob("*.safetensors"))
+
+
+def size_gb(repo_id: str) -> float:
+    d = local_model_dir(repo_id)
+    if not d.exists():
+        return 0.0
+    return round(sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / 1024**3, 1)
+
+
+def remove(repo_id: str) -> float:
+    """Delete a downloaded model. Returns the GB freed."""
+    freed = size_gb(repo_id)
+    d = local_model_dir(repo_id)
+    if d.exists():
+        shutil.rmtree(d)
+    return freed
 
 
 def main() -> int:

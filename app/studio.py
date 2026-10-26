@@ -109,7 +109,7 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
             d_go = gr.Button("Generate", variant="primary")
             d_state = gr.State(None)
             with gr.Row():
-                d_players = [gr.Audio(label=f"Take {i + 1}", interactive=False, visible=(i == 0)) for i in range(MAX_TAKES)]
+                d_players = [gr.Audio(label=f"Take {i + 1}", interactive=False, show_download_button=True, visible=(i == 0)) for i in range(MAX_TAKES)]
             with gr.Row():
                 d_pick = gr.Radio(["Take 1"], value="Take 1", label="Keep which take?")
                 d_name = gr.Textbox(label="Voice name", placeholder="e.g. Grumpy Wizard")

@@ -1,0 +1,5 @@
+# Keep the PyTorch build install.bat chose, and stay on versions qwen-tts was released against.
+torch==2.8.0
+torchaudio==2.8.0
+librosa>=0.10,<0.12
+numpy>=1.26,<2.4

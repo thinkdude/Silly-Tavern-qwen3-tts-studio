@@ -1,0 +1,15 @@
+# Created by install.bat
+.venv/
+.python/
+.tools/
+.cache/
+models/
+settings.json
+
+# Your data
+voices/
+outputs/
+
+__pycache__/
+*.pyc
+.pytest_cache/

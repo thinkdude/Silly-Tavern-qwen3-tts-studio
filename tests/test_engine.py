@@ -66,3 +66,22 @@ def test_oom_message():
 
     with pytest.raises(OutOfMemory, match="ran out of memory"):
         OOMEngine().design("Hi.", "x")
+
+
+def test_qwen_tts_import_hides_sox_and_flash_attn_warnings(capfd, caplog):
+    import logging
+    import os
+
+    from app.engine import _quiet_startup_checks
+
+    with _quiet_startup_checks():
+        os.popen("sox -h").close()  # what the sox package runs on import
+        logging.getLogger("sox").warning("SoX could not be found!")
+        print("\n********\nWarning: flash-attn is not installed. Will only run the manual PyTorch version.\n********\n ")
+        print("something else")
+    out, err = capfd.readouterr()
+    assert out.strip() == "something else"
+    assert "sox" not in err.lower()
+    assert "SoX" not in caplog.text
+    logging.getLogger("sox").warning("SoX could not be found!")  # only hidden during the import
+    assert "SoX" in caplog.text

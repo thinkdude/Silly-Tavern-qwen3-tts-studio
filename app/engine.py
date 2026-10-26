@@ -10,7 +10,12 @@ mid-range GPU is enough.
 
 from __future__ import annotations
 
+import contextlib
 import gc
+import io
+import logging
+import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -29,6 +34,47 @@ BATCH_SIZE = 4
 
 class OutOfMemory(RuntimeError):
     pass
+
+
+def _import_qwen_tts():
+    """Import qwen_tts without the two alarming warnings it prints on import.
+
+    Both come from its 25Hz tokenizer, which the 12Hz models never run: a check
+    for the SoX program (Windows answers "'sox' is not recognized as an internal
+    or external command") and a banner when flash-attn isn't installed.
+    """
+    if "qwen_tts" not in sys.modules:
+        with _quiet_startup_checks():
+            import qwen_tts  # noqa: F401
+    return sys.modules["qwen_tts"]
+
+
+@contextlib.contextmanager
+def _quiet_startup_checks():
+    real_popen = os.popen
+
+    def popen(cmd, *args, **kwargs):
+        if cmd == "sox -h":  # the sox package's check; hide the shell's complaint
+            cmd += " 2>" + os.devnull
+        return real_popen(cmd, *args, **kwargs)
+
+    def not_sox_missing(record):
+        return not record.getMessage().startswith("SoX could not be found")
+
+    sox_log = logging.getLogger("sox")
+    sox_log.addFilter(not_sox_missing)
+    os.popen = popen
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            yield
+    finally:
+        os.popen = real_popen
+        sox_log.removeFilter(not_sox_missing)
+        # Pass through anything else that was printed meanwhile.
+        for line in out.getvalue().splitlines():
+            if line.strip() and line.strip() != "********" and "flash-attn is not installed" not in line:
+                print(line)
 
 
 class TTSEngine:
@@ -74,7 +120,7 @@ class TTSEngine:
             return model
 
     def _load_model(self, kind: str):
-        from qwen_tts import Qwen3TTSModel
+        Qwen3TTSModel = _import_qwen_tts().Qwen3TTSModel
 
         repo = self.settings["design_model" if kind == "design" else "clone_model"]
         if "/" in repo and not Path(repo).exists():

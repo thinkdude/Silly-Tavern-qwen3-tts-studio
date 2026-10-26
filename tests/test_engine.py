@@ -1,6 +1,7 @@
+import numpy as np
 import pytest
 
-from tests.conftest import SR, FakeEngine, tone
+from tests.conftest import SR, FakeEngine, FakeModel, tone
 
 
 def test_design_returns_takes(engine):
@@ -66,3 +67,65 @@ def test_oom_message():
 
     with pytest.raises(OutOfMemory, match="ran out of memory"):
         OOMEngine().design("Hi.", "x")
+
+
+def test_qwen_tts_import_hides_sox_and_flash_attn_warnings(capfd, caplog):
+    import logging
+    import os
+
+    from app.engine import _quiet_startup_checks
+
+    with _quiet_startup_checks():
+        os.popen("sox -h").close()  # what the sox package runs on import
+        logging.getLogger("sox").warning("SoX could not be found!")
+        print("\n********\nWarning: flash-attn is not installed. Will only run the manual PyTorch version.\n********\n ")
+        print("something else")
+    out, err = capfd.readouterr()
+    assert out.strip() == "something else"
+    assert "sox" not in err.lower()
+    assert "SoX" not in caplog.text
+    logging.getLogger("sox").warning("SoX could not be found!")  # only hidden during the import
+    assert "SoX" in caplog.text
+
+
+class SilentModel(FakeModel):
+    """Like a model running at a precision the GPU can't handle."""
+
+    def __init__(self, kind, bad_takes):
+        super().__init__(kind)
+        self.bad_takes = bad_takes
+
+    def generate_voice_design(self, text, instruct, language):
+        wavs, sr = super().generate_voice_design(text, instruct, language)
+        return [np.full_like(w, np.nan) if i in self.bad_takes else w for i, w in enumerate(wavs)], sr
+
+    def generate_voice_clone(self, text, language, voice_clone_prompt):
+        wavs, sr = super().generate_voice_clone(text, language, voice_clone_prompt)
+        return [np.zeros_like(w) for w in wavs], sr
+
+
+def silent_engine(bad_takes, **settings):
+    eng = FakeEngine(**settings)
+    eng._load_model = lambda kind: SilentModel(kind, bad_takes)
+    return eng
+
+
+def test_silent_takes_are_dropped():
+    wavs, _ = silent_engine({1}).design("Hello.", "old man", takes=3)
+    assert len(wavs) == 2
+
+
+def test_all_silent_takes_explain_the_precision_fix():
+    from app.engine import SilentOutput
+
+    with pytest.raises(SilentOutput, match="float16.*float32"):
+        silent_engine({0, 1}, dtype="float16").design("Hello.", "old man", takes=2)
+    with pytest.raises(SilentOutput, match="Try generating again"):
+        silent_engine({0}, dtype="float32").design("Hello.", "old man", takes=1)
+
+
+def test_silent_speech_raises():
+    from app.engine import SilentOutput
+
+    with pytest.raises(SilentOutput):
+        silent_engine(set()).speak("Hi there.", ref_audio=(tone(4), SR), ref_text="hello")

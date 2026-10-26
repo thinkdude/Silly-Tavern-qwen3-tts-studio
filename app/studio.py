@@ -16,11 +16,12 @@ import numpy as np
 import soundfile as sf
 
 from . import audio, download_models, koboldcpp
-from .config import LANGUAGES, OUTPUTS_DIR, VOICES_DIR, load_settings, setup_environment
-from .engine import OutOfMemory, TTSEngine
+from .config import LANGUAGES, OUTPUTS_DIR, VOICES_DIR, load_settings, save_settings, setup_environment
+from .engine import OutOfMemory, SilentOutput, TTSEngine
 from .voices import VoiceLibrary
 
 MAX_TAKES = 4
+DTYPES = ["bfloat16", "float16", "float32"]
 VOICE_DEFAULT_LANG = "Voice's default"
 
 DEFAULT_SAMPLE_LINE = (
@@ -57,7 +58,7 @@ def friendly(fn):
             return fn(*args, **kwargs)
         except gr.Error:
             raise
-        except (ValueError, KeyError, OutOfMemory) as exc:
+        except (ValueError, KeyError, OutOfMemory, SilentOutput) as exc:
             raise gr.Error(str(exc).strip("'\""))
         except Exception as exc:
             traceback.print_exc()
@@ -67,7 +68,7 @@ def friendly(fn):
 
 
 def _for_player(wav: np.ndarray, sr: int):
-    return sr, (np.clip(wav, -1, 1) * 32767).astype(np.int16)
+    return sr, (np.clip(np.nan_to_num(wav), -1, 1) * 32767).astype(np.int16)
 
 
 def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
@@ -191,6 +192,18 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                 s_refresh = gr.Button("Refresh")
                 s_unload = gr.Button("Free GPU memory (unload models)")
             gr.Markdown("Settings live in `settings.json` in the install folder. Restart the Studio after editing it.")
+            gr.Markdown("### Precision")
+            with gr.Row():
+                s_dtype = gr.Radio(
+                    DTYPES,
+                    value=engine.settings.get("dtype", "bfloat16"),
+                    label="Precision",
+                    info="bfloat16 suits RTX 30-series and newer, float16 older cards. float32 works on every card "
+                    "but needs about twice the GPU memory; use it if takes come out silent.",
+                    scale=3,
+                )
+                s_dtype_apply = gr.Button("Apply", scale=1)
+            s_dtype_note = gr.Markdown()
             gr.Markdown("### Disk space")
             s_disk = gr.Markdown()
             with gr.Row():
@@ -210,7 +223,10 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                 for i in range(MAX_TAKES)
             ]
             labels = [f"Take {i + 1}" for i in range(len(wavs))]
-            return [(wavs, sr), *players, gr.update(choices=labels, value=labels[0]), "Listen to the takes, pick one, name it and save."]
+            status = "Listen to the takes, pick one, name it and save."
+            if len(wavs) < int(takes):
+                status += f" ({int(takes) - len(wavs)} of the takes came out silent and were left out.)"
+            return [(wavs, sr), *players, gr.update(choices=labels, value=labels[0]), status]
 
         d_go.click(do_design, [d_desc, d_line, d_lang, d_takes], [d_state, *d_players, d_pick, d_status])
 
@@ -336,6 +352,22 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
             return engine.status()
 
         s_unload.click(unload, None, s_info)
+
+        @friendly
+        def set_dtype(dtype):
+            if dtype not in DTYPES:
+                raise ValueError("Pick a precision first.")
+            engine.unload()
+            engine.settings["dtype"] = dtype
+            saved = load_settings()  # keep any other edits made to the file meanwhile
+            saved["dtype"] = dtype
+            save_settings(saved)
+            return engine.status(), (
+                f"Precision set to **{dtype}**. The model loads with it the next time you generate. "
+                "If the voice server is running, restart it to use it there too."
+            )
+
+        s_dtype_apply.click(set_dtype, [s_dtype], [s_info, s_dtype_note])
         demo.load(engine.status, None, s_info)
 
         def disk_md():

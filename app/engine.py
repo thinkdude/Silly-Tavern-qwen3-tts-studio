@@ -36,6 +36,10 @@ class OutOfMemory(RuntimeError):
     pass
 
 
+class SilentOutput(RuntimeError):
+    pass
+
+
 def _import_qwen_tts():
     """Import qwen_tts without the two alarming warnings it prints on import.
 
@@ -183,6 +187,16 @@ class TTSEngine:
             ) from exc
         raise exc
 
+    def _silent_error(self) -> SilentOutput:
+        dtype = str(self.settings.get("dtype", "bfloat16")).lower()
+        if dtype == "float32":
+            return SilentOutput("The model produced silence. Try generating again, or change the text a little.")
+        return SilentOutput(
+            f"The model produced silence. That usually means your graphics card doesn't handle the {dtype} "
+            "precision well. On the Studio's System tab set Precision to float32 (it needs about twice the "
+            "GPU memory), then try again."
+        )
+
     # -- generation --------------------------------------------------------
 
     def _run(self, fn, *args, **kwargs):
@@ -203,7 +217,11 @@ class TTSEngine:
                 language=[language or "Auto"] * takes,
             )
             self._last_used["design"] = time.time()
-        return [audio.to_mono_float(w) for w in wavs], int(sr)
+        # Drop takes that came out silent; only fail when all of them did.
+        wavs = [w for w in (audio.to_mono_float(w) for w in wavs) if not audio.is_silent(w)]
+        if not wavs:
+            raise self._silent_error()
+        return wavs, int(sr)
 
     def _prompt(self, ref_audio, ref_text: str, x_vector_only: bool, cache_key: tuple | None):
         if cache_key is not None and cache_key in self._prompt_cache:
@@ -259,6 +277,8 @@ class TTSEngine:
                     language=[language] * len(batch),
                     voice_clone_prompt=items * len(batch),
                 )
+                if any(audio.is_silent(audio.to_mono_float(w)) for w in wavs):
+                    raise self._silent_error()
                 out.extend(wavs)
             self._last_used["clone"] = time.time()
         wav = audio.concat(out, int(sr))

@@ -154,7 +154,7 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 - **`'sox' is not recognized`, `SoX could not be found` or a `flash-attn` warning**: harmless, Qwen3-TTS works without either. The Studio and server hide these now; if you still see them, update to the latest version.
 - **"Your GPU ran out of memory"**: the Studio and server each load a model. On cards under about 12 GB, close the server while designing voices, or click **Free GPU memory** in either app.
 - **Installer says the GPU was found but PyTorch can't use it**: update your NVIDIA driver from nvidia.com, then run `install.bat` again.
-- **Silence, noise or errors when generating on an older card (GTX 10/16 or RTX 20 series)**: set `"dtype": "float32"` in `settings.json`.
+- **Takes come out silent, or "The model produced silence"**: your graphics card doesn't handle the current precision well (most likely on GTX 10/16 or RTX 20 series cards). On the Studio's **System** tab set **Precision** to `float32` and click **Apply**. It needs about twice the GPU memory; if that runs out, try `bfloat16`, or switch to the 0.6B clone model.
 - **SillyTavern says the TTS request failed**: make sure the server window is open, the endpoint ends in `/v1/audio/speech`, and the voice id is in the control panel's list. The **Request log** tab shows what arrived.
 - **Clone sounds off**: use a cleaner 5 to 15 second clip and make sure the transcript matches word for word.
 - **A port is already in use**: change `studio_port` or `server_port` in `settings.json`.

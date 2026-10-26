@@ -61,6 +61,16 @@ def change_speed(wav: np.ndarray, speed: float) -> np.ndarray:
     return librosa.effects.time_stretch(wav, rate=float(speed))
 
 
+def is_silent(wav: np.ndarray, threshold: float = 1e-3) -> bool:
+    """True for empty or (nearly) all-zero audio, or audio with NaN/inf samples.
+
+    That is what the model gives back when the GPU can't handle the chosen
+    precision, so it's worth a clear error instead of a player that plays nothing.
+    """
+    wav = np.asarray(wav)
+    return wav.size == 0 or not np.isfinite(wav).all() or float(np.max(np.abs(wav))) < threshold
+
+
 def concat(chunks: list[np.ndarray], sr: int, gap_s: float = 0.2) -> np.ndarray:
     if not chunks:
         return np.zeros(0, dtype=np.float32)

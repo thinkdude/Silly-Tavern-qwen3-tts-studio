@@ -55,3 +55,13 @@ def test_trim_silence():
     wav = np.concatenate([np.zeros(SR), tone(1.0), np.zeros(SR)]).astype(np.float32)
     trimmed = audio.trim_silence(wav, SR)
     assert len(trimmed) < 1.5 * SR
+
+
+def test_is_silent():
+    assert audio.is_silent(np.zeros(SR, dtype=np.float32))
+    assert audio.is_silent(np.zeros(0, dtype=np.float32))
+    assert audio.is_silent(np.full(SR, np.nan, dtype=np.float32))
+    broken = tone(1)
+    broken[100] = np.nan
+    assert audio.is_silent(broken)
+    assert not audio.is_silent(tone(1))

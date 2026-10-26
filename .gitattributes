@@ -1,2 +1,5 @@
-# Auto detect text files and perform LF normalization
 * text=auto
+# Stored with CRLF as-is so both git clones and ZIP downloads run cleanly in cmd.exe
+*.bat -text
+*.ps1 text eol=crlf
+*.wav binary

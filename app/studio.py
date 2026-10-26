@@ -1,0 +1,308 @@
+"""Voice Studio: design voices from a description, clone voices from a clip,
+and try out the voices you've saved.
+
+Start it with start_studio.bat (or `python -m app.studio`).
+"""
+
+from __future__ import annotations
+
+import argparse
+import functools
+import time
+import traceback
+
+import gradio as gr
+import numpy as np
+import soundfile as sf
+
+from . import audio
+from .config import LANGUAGES, OUTPUTS_DIR, VOICES_DIR, load_settings, setup_environment
+from .engine import OutOfMemory, TTSEngine
+from .voices import VoiceLibrary
+
+MAX_TAKES = 4
+VOICE_DEFAULT_LANG = "Voice's default"
+
+DEFAULT_SAMPLE_LINE = (
+    "Hello there! It's really good to finally meet you. I've been looking forward to this "
+    "for a while, so come in, sit down, and tell me everything that's happened."
+)
+DEFAULT_TEST_LINE = "This is a quick test of my new voice. So, how do I sound? Not bad, right?"
+
+DESCRIPTION_EXAMPLES = [
+    "Male, around 60 years old, deep gravelly voice, slow and deliberate, a warm but weary tone.",
+    "Female, mid-20s, bright and energetic, speaks quickly with a playful, teasing tone.",
+    "Female, 40s, calm low alto, soothing and clear, like an audiobook narrator.",
+    "Young man, about 17, tenor, nervous and a little awkward, voice cracks now and then.",
+    "Elderly woman, thin and slightly shaky voice, kind and grandmotherly, speaks gently.",
+    "Male, 30s, smooth baritone, confident and charming, with a slight British accent.",
+    "Female, 20s, soft and breathy, shy, speaks quietly and hesitantly.",
+    "Gruff middle-aged man, loud and commanding, like a drill sergeant barking orders.",
+]
+
+TIPS = """
+**Tips for a good clone**
+- 5 to 15 seconds of one person talking, with no music or background noise.
+- Type exactly what is said in the clip. Clones with a transcript are noticeably better.
+- The clone copies the clip's mood and recording quality, so pick a clip that sounds the way you want.
+"""
+
+
+def friendly(fn):
+    """Show errors as a popup in the GUI instead of a stack trace."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except gr.Error:
+            raise
+        except (ValueError, KeyError, OutOfMemory) as exc:
+            raise gr.Error(str(exc).strip("'\""))
+        except Exception as exc:
+            traceback.print_exc()
+            raise gr.Error(f"Something went wrong: {exc}")
+
+    return wrapper
+
+
+def _for_player(wav: np.ndarray, sr: int):
+    return sr, (np.clip(wav, -1, 1) * 32767).astype(np.int16)
+
+
+def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
+    def voice_choices():
+        return [(f"{v.name}  ({v.kind})", v.id) for v in library.list()]
+
+    def library_update(selected: str | None = None):
+        choices = voice_choices()
+        ids = [c[1] for c in choices]
+        value = selected if selected in ids else (ids[0] if ids else None)
+        return gr.update(choices=choices, value=value)
+
+    with gr.Blocks(title="Qwen3-TTS Voice Studio", theme=gr.themes.Soft()) as demo:
+        gr.Markdown("# Qwen3-TTS Voice Studio\nDesign a voice from a description, or clone one from a clip. Saved voices show up in **My voices** and in the voice server.")
+
+        # ------------------------------------------------------------ Design
+        with gr.Tab("Design a voice"):
+            gr.Markdown("Describe the voice you want. The model reads the sample line in that voice; generate a few takes and keep your favourite.")
+            d_desc = gr.Textbox(label="Voice description", lines=3, placeholder=DESCRIPTION_EXAMPLES[0])
+            gr.Examples([[d] for d in DESCRIPTION_EXAMPLES], inputs=[d_desc], label="Ideas")
+            d_line = gr.Textbox(label="Sample line (becomes the voice's reference clip)", value=DEFAULT_SAMPLE_LINE, lines=2)
+            with gr.Row():
+                d_lang = gr.Dropdown(LANGUAGES, value="English", label="Language")
+                d_takes = gr.Slider(1, MAX_TAKES, value=2, step=1, label="Takes to generate")
+            d_go = gr.Button("Generate", variant="primary")
+            d_state = gr.State(None)
+            with gr.Row():
+                d_players = [gr.Audio(label=f"Take {i + 1}", interactive=False, visible=(i == 0)) for i in range(MAX_TAKES)]
+            with gr.Row():
+                d_pick = gr.Radio(["Take 1"], value="Take 1", label="Keep which take?")
+                d_name = gr.Textbox(label="Voice name", placeholder="e.g. Grumpy Wizard")
+            d_save = gr.Button("Save voice")
+            d_status = gr.Markdown()
+
+        # ------------------------------------------------------------- Clone
+        with gr.Tab("Clone a voice"):
+            with gr.Row():
+                with gr.Column():
+                    c_ref = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference clip")
+                    c_text = gr.Textbox(label="Exactly what is said in the clip", lines=3)
+                    c_xvec = gr.Checkbox(label="I don't have a transcript (works, but the clone is less accurate)")
+                    c_lang = gr.Dropdown(LANGUAGES, value="English", label="Language")
+                with gr.Column():
+                    gr.Markdown(TIPS)
+                    c_test = gr.Textbox(label="Test line", value=DEFAULT_TEST_LINE, lines=2)
+                    c_preview = gr.Button("Preview clone", variant="primary")
+                    c_out = gr.Audio(label="Preview", interactive=False)
+            with gr.Row():
+                c_name = gr.Textbox(label="Voice name", placeholder="e.g. Dad")
+                c_save = gr.Button("Save voice")
+            c_status = gr.Markdown()
+
+        # --------------------------------------------------------- My voices
+        with gr.Tab("My voices") as t_lib:
+            with gr.Row():
+                l_voice = gr.Dropdown(voice_choices(), label="Voice", scale=4)
+                l_refresh = gr.Button("Refresh", scale=1)
+            l_info = gr.Markdown()
+            l_refclip = gr.Audio(label="Reference clip", interactive=False, type="filepath")
+            l_text = gr.Textbox(label="Text to speak", lines=5, value=DEFAULT_TEST_LINE)
+            with gr.Row():
+                l_lang = gr.Dropdown([VOICE_DEFAULT_LANG] + LANGUAGES, value=VOICE_DEFAULT_LANG, label="Language")
+                l_speed = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="Speed")
+            l_go = gr.Button("Speak", variant="primary")
+            l_out = gr.Audio(label="Result (download with the button on the player)", interactive=False, type="filepath")
+            with gr.Accordion("Edit or delete this voice", open=False):
+                with gr.Row():
+                    l_newname = gr.Textbox(label="New name")
+                    l_rename = gr.Button("Rename")
+                with gr.Row():
+                    l_reftext = gr.Textbox(label="Transcript of the reference clip", lines=2)
+                    l_savetext = gr.Button("Save transcript")
+                with gr.Row():
+                    l_confirm = gr.Checkbox(label="Yes, delete it for good")
+                    l_delete = gr.Button("Delete voice", variant="stop")
+            l_status = gr.Markdown()
+
+        # ------------------------------------------------------------ System
+        with gr.Tab("System"):
+            s_info = gr.JSON(label="Status")
+            with gr.Row():
+                s_refresh = gr.Button("Refresh")
+                s_unload = gr.Button("Free GPU memory (unload models)")
+            gr.Markdown("Settings live in `settings.json` in the install folder. Restart the Studio after editing it.")
+
+        # ------------------------------------------------------- handlers
+        @friendly
+        def do_design(desc, line, lang, takes):
+            if not (desc or "").strip():
+                raise ValueError("Describe the voice first.")
+            if not (line or "").strip():
+                raise ValueError("The sample line is empty.")
+            wavs, sr = engine.design(line.strip(), desc.strip(), lang, int(takes))
+            players = [
+                gr.update(value=_for_player(wavs[i], sr), visible=True) if i < len(wavs) else gr.update(value=None, visible=False)
+                for i in range(MAX_TAKES)
+            ]
+            labels = [f"Take {i + 1}" for i in range(len(wavs))]
+            return [(wavs, sr), *players, gr.update(choices=labels, value=labels[0]), "Listen to the takes, pick one, name it and save."]
+
+        d_go.click(do_design, [d_desc, d_line, d_lang, d_takes], [d_state, *d_players, d_pick, d_status])
+
+        @friendly
+        def save_design(state, pick, name, desc, line, lang):
+            if not state:
+                raise ValueError("Generate a voice first.")
+            wavs, sr = state
+            idx = int(str(pick).split()[-1]) - 1 if pick else 0
+            v = library.save(name, wavs[idx], sr, kind="designed", ref_text=line, language=lang, description=desc)
+            return f"Saved **{v.name}** (id `{v.id}`).", library_update(v.id)
+
+        d_save.click(save_design, [d_state, d_pick, d_name, d_desc, d_line, d_lang], [d_status, l_voice])
+
+        def _clip(path):
+            if not path:
+                raise ValueError("Upload or record a reference clip first.")
+            wav, sr = audio.load_audio(path)
+            wav = audio.trim_silence(wav, sr)
+            secs = len(wav) / sr
+            if secs < 2:
+                raise ValueError("The clip is too short. Use at least 3 seconds of speech (5 to 15 is best).")
+            note = f"Clip length: {secs:.1f}s."
+            if secs > 20:
+                note += " That's long; 5 to 15 seconds clones just as well and is faster."
+            return wav, sr, note
+
+        def _check_text(text, xvec):
+            if not xvec and not (text or "").strip():
+                raise ValueError("Type what is said in the clip, or tick \"I don't have a transcript\".")
+
+        @friendly
+        def preview_clone(path, text, xvec, lang, test):
+            _check_text(text, xvec)
+            wav, sr, note = _clip(path)
+            out, out_sr = engine.speak(test, ref_audio=(wav, sr), ref_text=text, x_vector_only=xvec, language=lang)
+            return _for_player(out, out_sr), note + " Happy with it? Name it and save."
+
+        c_preview.click(preview_clone, [c_ref, c_text, c_xvec, c_lang, c_test], [c_out, c_status])
+
+        @friendly
+        def save_clone(path, text, xvec, lang, name):
+            _check_text(text, xvec)
+            wav, sr, _ = _clip(path)
+            v = library.save(name, wav, sr, kind="cloned", ref_text="" if xvec else text, language=lang, x_vector_only=xvec)
+            return f"Saved **{v.name}** (id `{v.id}`).", library_update(v.id)
+
+        c_save.click(save_clone, [c_ref, c_text, c_xvec, c_lang, c_name], [c_status, l_voice])
+
+        def show_voice(voice_id):
+            v = library.get(voice_id) if voice_id else None
+            if v is None:
+                return "No voices yet. Make one in the Design or Clone tab.", None, "", ""
+            lines = [f"**{v.name}**: {v.kind} voice, id `{v.id}`, language {v.language}"]
+            if v.description:
+                lines.append(f"*{v.description}*")
+            if v.x_vector_only:
+                lines.append("No transcript saved, so this clone is less accurate. Add one below to improve it.")
+            return "\n\n".join(lines), str(v.reference_path), v.name, v.ref_text
+
+        l_voice.change(show_voice, [l_voice], [l_info, l_refclip, l_newname, l_reftext])
+        l_refresh.click(lambda cur: library_update(cur), [l_voice], [l_voice])
+        t_lib.select(lambda cur: library_update(cur), [l_voice], [l_voice])
+
+        @friendly
+        def speak(voice_id, text, lang, speed):
+            v = library.get(voice_id)
+            if v is None:
+                raise ValueError("Pick a voice first.")
+            wav, sr = engine.speak(text, voice=v, language=None if lang == VOICE_DEFAULT_LANG else lang, speed=speed)
+            OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+            out = OUTPUTS_DIR / f"{v.id}-{time.strftime('%Y%m%d-%H%M%S')}.wav"
+            sf.write(str(out), wav, sr, subtype="PCM_16")
+            return str(out), f"Saved to `{out}`"
+
+        l_go.click(speak, [l_voice, l_text, l_lang, l_speed], [l_out, l_status])
+
+        @friendly
+        def rename(voice_id, new_name):
+            v = library.rename(voice_id, new_name)
+            return f"Renamed to **{v.name}**. The id stays `{v.id}`, so SillyTavern keeps working.", library_update(v.id)
+
+        l_rename.click(rename, [l_voice, l_newname], [l_status, l_voice])
+
+        @friendly
+        def save_text(voice_id, text):
+            v = library.update_text(voice_id, ref_text=text)
+            return f"Transcript saved for **{v.name}**."
+
+        l_savetext.click(save_text, [l_voice, l_reftext], [l_status])
+
+        @friendly
+        def delete(voice_id, confirmed):
+            if not confirmed:
+                raise ValueError("Tick the box to confirm deleting.")
+            v = library.get(voice_id)
+            if v is None:
+                raise ValueError("Pick a voice first.")
+            library.delete(v.id)
+            return f"Deleted **{v.name}**.", library_update(), gr.update(value=False)
+
+        l_delete.click(delete, [l_voice, l_confirm], [l_status, l_voice, l_confirm])
+
+        s_refresh.click(engine.status, None, s_info)
+
+        def unload():
+            engine.unload()
+            return engine.status()
+
+        s_unload.click(unload, None, s_info)
+        demo.load(engine.status, None, s_info)
+        demo.load(show_voice, [l_voice], [l_info, l_refclip, l_newname, l_reftext])
+
+    return demo
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Qwen3-TTS Voice Studio")
+    ap.add_argument("--port", type=int, help="port to serve on (default from settings.json, 7860)")
+    ap.add_argument("--no-browser", action="store_true", help="don't open the browser automatically")
+    args = ap.parse_args()
+
+    setup_environment()
+    settings = load_settings()
+    engine = TTSEngine(settings, idle_unload_minutes=settings.get("studio_idle_unload_minutes", 10))
+    demo = build(engine, VoiceLibrary())
+    port = args.port or int(settings.get("studio_port", 7860))
+    print(f"\nVoice Studio: http://127.0.0.1:{port}\n(Leave this window open while you use it. Close it to stop.)\n")
+    demo.queue(default_concurrency_limit=1).launch(
+        server_name="127.0.0.1",
+        server_port=port,
+        inbrowser=not args.no_browser,
+        allowed_paths=[str(VOICES_DIR), str(OUTPUTS_DIR)],
+        show_api=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

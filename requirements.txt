@@ -1,0 +1,9 @@
+# PyTorch is installed separately by install.bat (it picks the right CUDA build).
+qwen-tts==0.1.1
+gradio>=5.49,<6
+fastapi
+uvicorn
+soundfile>=0.12
+lameenc>=1.7
+huggingface_hub
+numpy

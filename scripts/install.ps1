@@ -1,20 +1,26 @@
 # Qwen3-TTS Studio installer.
 # Everything is installed inside this folder: a private Python, the packages,
 # the model weights and all caches. Nothing is written to the C: drive.
+# If you already have a Python with GPU PyTorch, the installer offers to reuse
+# that PyTorch instead of downloading another copy.
 #
 # Run it through install.bat. Options:
-#   -Yes          don't ask any questions
-#   -SkipModels   don't download model weights (do it later with install.bat)
-#   -AllModels    also download the other clone model size
-#   -Reset        replace settings.json with fresh recommendations for this PC
-#   -Cpu          install without GPU support (very slow, for testing only)
+#   -Yes               don't ask any questions (reuses an existing PyTorch if one is found)
+#   -SkipModels        don't download model weights (do it later with install.bat)
+#   -AllModels         also download the other clone model size
+#   -Reset             replace settings.json with fresh recommendations for this PC
+#   -Cpu               install without GPU support (very slow, for testing only)
+#   -Fresh             always install a private PyTorch, even if one could be reused
+#   -UsePython <path>  reuse PyTorch from this python.exe (e.g. a conda env or another app's venv)
 
 param(
     [switch]$Yes,
     [switch]$SkipModels,
     [switch]$AllModels,
     [switch]$Reset,
-    [switch]$Cpu
+    [switch]$Cpu,
+    [switch]$Fresh,
+    [string]$UsePython
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,6 +29,8 @@ $ProgressPreference = 'SilentlyContinue'  # makes Invoke-WebRequest much faster
 
 $TorchVersion = '2.8.0'
 $PythonVersion = '3.12'
+# An existing PyTorch is reused only if it is at least this new.
+$MinReuseTorch = [version]'2.6.0'
 
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
@@ -63,7 +71,6 @@ if ($drive -ne 'G:' -and -not $Yes) {
 # Keep every cache inside the install folder.
 $env:UV_CACHE_DIR = Join-Path $Root '.cache\uv'
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $Root '.python'
-$env:UV_PYTHON_PREFERENCE = 'only-managed'
 $env:UV_LINK_MODE = 'copy'
 $env:HF_HOME = Join-Path $Root '.cache\huggingface'
 $env:HF_HUB_DISABLE_TELEMETRY = '1'
@@ -146,26 +153,169 @@ if (-not (Test-Path $uv)) {
 }
 Info (& $uv --version)
 
-# --- 3. Python environment ---------------------------------------------------
-Step "Creating a private Python $PythonVersion environment in .venv"
 $venv = Join-Path $Root '.venv'
 $py = Join-Path $venv 'Scripts\python.exe'
-if (-not (Test-Path $py)) {
-    Run $uv @('venv', '--python', $PythonVersion, $venv) 'Creating the Python environment'
-} else {
-    Info 'Already exists, reusing it.'
+$reuseMarker = Join-Path $venv 'reused-python.json'
+$reuseCfg = $null
+
+# --- 3. Reuse a Python that already has GPU PyTorch? ---------------------------
+function Find-PythonCandidates {
+    $found = New-Object System.Collections.Generic.List[string]
+    if ($UsePython) {
+        $found.Add($UsePython)
+    } else {
+        if (Get-Command py -ErrorAction SilentlyContinue) {
+            foreach ($l in @(& py -0p 2>$null)) {
+                if ($l -match '([A-Za-z]:\\.*?python\.exe)\s*$') { $found.Add($Matches[1]) }
+            }
+        }
+        foreach ($cmd in @(Get-Command python, python3 -All -ErrorAction SilentlyContinue)) {
+            if ($cmd.Source) { $found.Add($cmd.Source) }
+        }
+    }
+    # Skip the Microsoft Store stub and anything inside this folder.
+    return @($found | Where-Object {
+        $_ -and (Test-Path $_) -and ($_ -notmatch 'WindowsApps') -and -not $_.StartsWith($Root, [StringComparison]::OrdinalIgnoreCase)
+    } | Select-Object -Unique)
 }
 
-# --- 4. Packages ---------------------------------------------------------------
-Step "Installing PyTorch $TorchVersion ($torchIndex). This is a big download (about 3 GB)."
-Run $uv @('pip', 'install', '--python', $py,
-    "torch==$TorchVersion", "torchaudio==$TorchVersion",
-    '--index-url', "https://download.pytorch.org/whl/$torchIndex") 'Installing PyTorch'
+function Probe-Python([string]$exe) {
+    $out = & $exe (Join-Path $PSScriptRoot 'probe_python.py') 2>$null
+    $line = @($out) | Where-Object { $_ -like 'PROBE:*' } | Select-Object -First 1
+    if (-not $line) { return $null }
+    try { return ($line.Substring(6) | ConvertFrom-Json) } catch { return $null }
+}
 
-Step 'Installing Qwen3-TTS and the app requirements'
-Run $uv @('pip', 'install', '--python', $py,
-    '-r', (Join-Path $Root 'requirements.txt'),
-    '-c', (Join-Path $Root 'constraints.txt')) 'Installing requirements'
+function Torch-BaseVersion([string]$v) {
+    if ($v -match '^(\d+\.\d+(\.\d+)?)') { return [version]$Matches[1] }
+    return $null
+}
+
+function Find-ReusableTorch {
+    $best = $null
+    $ErrorActionPreference = 'Continue'
+    foreach ($exe in (Find-PythonCandidates)) {
+        Info "Checking $exe"
+        $p = Probe-Python $exe
+        if (-not $p) { continue }
+        if ($p.version -notin @('3.10', '3.11', '3.12', '3.13')) { Info "  Python $($p.version): not supported"; continue }
+        if (-not $p.torch) { Info "  Python $($p.version), no PyTorch"; continue }
+        $tv = Torch-BaseVersion $p.torch
+        if (-not $tv -or $tv -lt $MinReuseTorch) { Info "  PyTorch $($p.torch): too old (need $MinReuseTorch+)"; continue }
+        if ($torchIndex -ne 'cpu' -and -not $p.cuda) { Info "  PyTorch $($p.torch) can't use your GPU"; continue }
+        Info "  PyTorch $($p.torch), GPU: $($p.cuda)  -> usable"
+        if (-not $best -or $tv -gt (Torch-BaseVersion $best.torch)) { $best = $p }
+    }
+    return $best
+}
+
+if ((Test-Path $reuseMarker) -and $Fresh) {
+    Step 'Switching to a private PyTorch (-Fresh): removing the old .venv'
+    Remove-Item -Recurse -Force $venv
+} elseif ($UsePython -and (Test-Path $py)) {
+    Step "Rebuilding .venv on top of $UsePython (-UsePython)"
+    Remove-Item -Recurse -Force $venv
+}
+
+if (Test-Path $reuseMarker) {
+    $reuseCfg = Get-Content $reuseMarker -Raw | ConvertFrom-Json
+    Step "Reusing PyTorch from $($reuseCfg.exe) (set up on an earlier run)"
+} elseif (-not (Test-Path $py) -and -not $Fresh -and ($torchIndex -ne 'cpu' -or $UsePython)) {
+    Step 'Looking for a Python that already has GPU PyTorch'
+    $cand = Find-ReusableTorch
+    if ($cand -and $UsePython) {
+        $reuseCfg = $cand
+    } elseif ($cand) {
+        Write-Host ''
+        Info "Found PyTorch $($cand.torch) in $($cand.exe)"
+        Info 'Reusing it skips a ~3 GB download. That Python stays untouched; Qwen3-TTS gets its'
+        Info 'own .venv that borrows its PyTorch. If you later remove or upgrade that Python,'
+        Info 'run install.bat -Fresh.'
+        $use = $true
+        if (-not $Yes) {
+            $answer = Read-Host '    Reuse it? (Y/n)'
+            $use = $answer -notmatch '^[nN]'
+        }
+        if ($use) { $reuseCfg = $cand }
+    } elseif ($UsePython) {
+        Warn "Can't reuse PyTorch from $UsePython (see above). Installing a private copy instead."
+    } else {
+        Info 'None found, installing a private copy.'
+    }
+}
+
+# --- 4. Python environment and packages -----------------------------------------
+function Install-Requirements([string[]]$extra) {
+    Step 'Installing Qwen3-TTS and the app requirements'
+    $reqArgs = @('pip', 'install', '--python', $py, '-r', (Join-Path $Root 'requirements.txt')) + $extra
+    Run $uv $reqArgs 'Installing requirements'
+}
+
+if ($reuseCfg) {
+    if (-not (Test-Path $py)) {
+        Step "Creating .venv on top of $($reuseCfg.exe)"
+        Run $uv @('venv', '--python', $reuseCfg.exe, $venv) 'Creating the Python environment'
+        # A .pth file adds the existing site-packages after .venv's own, so .venv's
+        # packages win and only what's missing (PyTorch) comes from the other Python.
+        $sitePackages = Join-Path $venv 'Lib\site-packages'
+        $dirs = @($reuseCfg.site_dirs) -join "`r`n"
+        [IO.File]::WriteAllText((Join-Path $sitePackages 'zz_reuse_existing_python.pth'), $dirs + "`r`n")
+        ($reuseCfg | ConvertTo-Json) | Set-Content -Path $reuseMarker -Encoding UTF8
+    }
+
+    $tv = Torch-BaseVersion $reuseCfg.torch
+    $tav = Torch-BaseVersion ([string]$reuseCfg.torchaudio)
+    if (-not $tav -or $tav -ne $tv) {
+        # torchaudio must match the torch version, so add the matching build to .venv.
+        $tag = 'cpu'
+        if ($reuseCfg.cuda_version) { $tag = 'cu' + ($reuseCfg.cuda_version -replace '\.', '') }
+        Step "Adding torchaudio $tv ($tag) to match your PyTorch"
+        Run $uv @('pip', 'install', '--python', $py, '--no-deps', "torchaudio==$tv",
+            '--index-url', "https://download.pytorch.org/whl/$tag") 'Installing torchaudio'
+    }
+
+    # Leave torch/torchaudio out of resolution so uv doesn't install a second copy.
+    $cacheDir = Join-Path $Root '.cache'
+    New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    $excludes = Join-Path $cacheDir 'reuse-excludes.txt'
+    $constraints = Join-Path $cacheDir 'reuse-constraints.txt'
+    Set-Content -Path $excludes -Value @('torch', 'torchaudio') -Encoding ASCII
+    Get-Content (Join-Path $Root 'constraints.txt') | Where-Object { $_ -notmatch '^\s*torch' } |
+        Set-Content -Path $constraints -Encoding ASCII
+    Install-Requirements @('--excludes', $excludes, '-c', $constraints)
+
+    Step 'Checking that the reused PyTorch works here'
+    $ErrorActionPreference = 'Continue'
+    $check = & $py -c "import torch, torchaudio, qwen_tts; print('OK', torch.__version__, torch.cuda.is_available())" 2>&1
+    $ErrorActionPreference = 'Stop'
+    $okLine = @($check) | Where-Object { "$_" -like 'OK *' } | Select-Object -First 1
+    if (-not $okLine -or ($torchIndex -ne 'cpu' -and "$okLine" -notmatch 'True$')) {
+        Warn 'The reused PyTorch did not work inside Qwen3-TTS:'
+        @($check) | Select-Object -Last 5 | ForEach-Object { Warn "  $_" }
+        Warn 'Falling back to a private copy.'
+        Remove-Item -Recurse -Force $venv
+        $reuseCfg = $null
+    } else {
+        Info "$okLine"
+    }
+}
+
+if (-not $reuseCfg) {
+    $env:UV_PYTHON_PREFERENCE = 'only-managed'
+    Step "Creating a private Python $PythonVersion environment in .venv"
+    if (-not (Test-Path $py)) {
+        Run $uv @('venv', '--python', $PythonVersion, $venv) 'Creating the Python environment'
+    } else {
+        Info 'Already exists, reusing it.'
+    }
+
+    Step "Installing PyTorch $TorchVersion ($torchIndex). This is a big download (about 3 GB)."
+    Run $uv @('pip', 'install', '--python', $py,
+        "torch==$TorchVersion", "torchaudio==$TorchVersion",
+        '--index-url', "https://download.pytorch.org/whl/$torchIndex") 'Installing PyTorch'
+
+    Install-Requirements @('-c', (Join-Path $Root 'constraints.txt'))
+}
 
 # --- 5. Settings ---------------------------------------------------------------
 Step 'Choosing settings for your PC'

@@ -22,7 +22,26 @@ Everything (Python, packages, models, your voices) stays inside one folder, so i
 
 The installer checks your graphics card, downloads a private copy of Python, installs PyTorch with the right CUDA version, picks settings for your GPU and downloads the models (around 12 GB in total). It takes a while the first time. If anything fails, run `install.bat` again; it picks up where it left off.
 
-Installer options (run from a command prompt in the folder): `install.bat -Reset` re-picks settings for your GPU, `install.bat -AllModels` also downloads the other clone model size, `install.bat -SkipModels` skips the model download.
+### Already have Python with PyTorch?
+
+If another AI tool already installed a GPU-enabled PyTorch (2.6 or newer, Python 3.10 to 3.13), the installer finds it and asks whether to reuse it. Saying yes skips the roughly 3 GB PyTorch download.
+
+Your existing Python is never changed. Qwen3-TTS still gets its own `.venv`, which borrows only PyTorch from the other Python and installs everything else privately, so package versions can't clash. Before finishing, the installer checks that the borrowed PyTorch really works with your GPU, and falls back to a private copy if it doesn't.
+
+The installer looks at the Pythons listed by `py -0p` and any `python` on your PATH. To point it at a specific one, such as a conda env or another app's venv, run `install.bat -UsePython "C:\path\to\python.exe"`. If you later uninstall or upgrade that Python, run `install.bat -Fresh` to switch to a private PyTorch.
+
+### Installer options
+
+Run these from a command prompt in the install folder:
+
+| Option | What it does |
+| --- | --- |
+| `-Reset` | Picks settings for your GPU again |
+| `-AllModels` | Also downloads the other clone model size |
+| `-SkipModels` | Skips the model download |
+| `-Fresh` | Always installs a private PyTorch, even if one could be reused |
+| `-UsePython <path>` | Reuses PyTorch from that `python.exe` |
+| `-Yes` | Asks no questions (it reuses an existing PyTorch if one is found) |
 
 ## Make voices: `start_studio.bat`
 
@@ -119,6 +138,7 @@ G:\Qwen3TTS\
   models\       downloaded model weights
   settings.json your settings
   .venv\ .python\ .tools\ .cache\   private Python, packages and caches
+                                    (.python is skipped when an existing PyTorch is reused)
 ```
 
 To uninstall, delete the folder. Back up `voices\` first if you want to keep your voices.

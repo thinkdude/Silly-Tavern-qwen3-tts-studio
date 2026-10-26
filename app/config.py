@@ -53,6 +53,9 @@ DEFAULTS: dict[str, Any] = {
     # SillyTavern itself defaults to port 8000, so the voice server uses 8890.
     "server_port": 8890,
     "server_idle_unload_minutes": 0,
+    # The type-and-speak app (start_speak.bat).
+    "speak_port": 7861,
+    "speak_idle_unload_minutes": 10,
     # Optional. When set, API clients must send "Authorization: Bearer <key>".
     "api_key": "",
     "default_language": "Auto",

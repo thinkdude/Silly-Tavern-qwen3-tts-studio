@@ -1,8 +1,9 @@
 # Qwen3-TTS Studio
 
-Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with two simple apps:
+Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with a few simple apps:
 
 - **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip, then save it to your voice library.
+- **Speak** for typing anything and hearing it in one of your saved voices, saved as a WAV or MP3.
 - **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server** (full model, most accurate voices). Both use the OpenAI text-to-speech API that SillyTavern understands.
 
 Everything (Python, packages, models, your voices) stays inside one folder, so it can live on your G: drive without touching C:.
@@ -53,6 +54,17 @@ The Studio opens in your browser at http://127.0.0.1:7860. The first action in e
 **Clone a voice.** Upload or record 5 to 15 seconds of one person speaking clearly with no music. Type exactly what they say (clones with a transcript are much better), click **Preview clone**, and save it when you like it. Only clone voices you have permission to use.
 
 **My voices.** Try any saved voice with your own text, change its speed, and download the result (also saved in `outputs\`). You can rename voices, fix a transcript, or delete them here.
+
+## Type and listen: `start_speak.bat`
+
+Speak opens in your browser at http://127.0.0.1:7861. Pick one of your saved voices, type what you want to hear and press **Enter** (or click **Speak**). **Shift+Enter** starts a new line, and long text is fine.
+
+- The line plays straight away and is saved in the `outputs` folder, named after the voice and its first few words. Choose **wav** or **mp3** under **Save as**; the download button on each player saves another copy wherever you like.
+- Your last ten lines stay on the page under **Earlier** so you can play them again.
+- Not quite right? Press **Speak** again for a slightly different take, or change the **Speed**.
+- It remembers the voice, speed and file type you picked last time.
+- If the Voice Server is running, Speak lets it do the talking, so the voice model isn't loaded onto your GPU twice. Otherwise Speak loads its own copy when it starts (the first line can take a minute) and frees it after 10 idle minutes.
+- New voice made in the Studio? Click **Refresh voices**.
 
 ## Play voices with KoboldCpp
 
@@ -140,7 +152,8 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `keep_both_loaded` | on with 16 GB+ VRAM | Keep the design and clone models in memory together instead of swapping |
 | `studio_idle_unload_minutes` | 10 | Studio frees GPU memory after this many idle minutes |
 | `server_idle_unload_minutes` | 0 | Same for the server; 0 keeps the model loaded |
-| `server_port`, `studio_port` | 8890, 7860 | Ports |
+| `speak_idle_unload_minutes` | 10 | Same for Speak |
+| `server_port`, `studio_port`, `speak_port` | 8890, 7860, 7861 | Ports |
 | `server_host` | `127.0.0.1` | Use `0.0.0.0` to allow other PCs on your network |
 | `api_key` | empty | When set, apps must send it as a Bearer token (put it in SillyTavern's API key field) |
 | `koboldcpp_export` | on | Copy saved voices into the KoboldCpp voices folder |
@@ -152,12 +165,12 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 ## Troubleshooting
 
 - **`'sox' is not recognized`, `SoX could not be found` or a `flash-attn` warning**: harmless, Qwen3-TTS works without either. The Studio and server hide these now; if you still see them, update to the latest version.
-- **"Your GPU ran out of memory"**: the Studio and server each load a model. On cards under about 12 GB, close the server while designing voices, or click **Free GPU memory** in either app.
+- **"Your GPU ran out of memory"**: the Studio, the server and Speak can each load a model (Speak uses the server's when the server is running). On cards under about 12 GB, close the server while designing voices, or click **Free GPU memory** in either app.
 - **Installer says the GPU was found but PyTorch can't use it**: update your NVIDIA driver from nvidia.com, then run `install.bat` again.
 - **Takes come out silent, or "The model produced silence"**: your graphics card doesn't handle the current precision well (most likely on GTX 10/16 or RTX 20 series cards). On the Studio's **System** tab set **Precision** to `float32` and click **Apply**. It needs about twice the GPU memory; if that runs out, try `bfloat16`, or switch to the 0.6B clone model.
 - **SillyTavern says the TTS request failed**: make sure the server window is open, the endpoint ends in `/v1/audio/speech`, and the voice id is in the control panel's list. The **Request log** tab shows what arrived.
 - **Clone sounds off**: use a cleaner 5 to 15 second clip and make sure the transcript matches word for word.
-- **A port is already in use**: change `studio_port` or `server_port` in `settings.json`.
+- **A port is already in use**: change `studio_port`, `server_port` or `speak_port` in `settings.json`.
 
 ## Updating
 
@@ -167,11 +180,11 @@ Download the new ZIP and extract it over the existing folder (or `git pull`), th
 
 ```
 G:\Qwen3TTS\
-  install.bat, start_studio.bat, start_server.bat
-  app\          the Studio, server and engine code
+  install.bat, start_studio.bat, start_server.bat, start_speak.bat
+  app\          the Studio, server, Speak and engine code
   voices\       your saved voices (one folder each: voice.json + reference.wav)
   koboldcpp_voices\  copies of your voices for KoboldCpp (one .wav per voice)
-  outputs\      audio made in the Studio
+  outputs\      audio made in the Studio and Speak
   models\       downloaded model weights
   settings.json your settings
   .venv\ .python\ .tools\ .cache\   private Python, packages and caches

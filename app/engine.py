@@ -13,6 +13,7 @@ from __future__ import annotations
 import gc
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -76,6 +77,13 @@ class TTSEngine:
         from qwen_tts import Qwen3TTSModel
 
         repo = self.settings["design_model" if kind == "design" else "clone_model"]
+        if "/" in repo and not Path(repo).exists():
+            from . import download_models
+
+            if not download_models.is_downloaded(repo):
+                # e.g. the design model was removed to save space; fetch it again.
+                print(f"[engine] {repo} isn't downloaded yet, downloading it now (about 4 GB) ...", flush=True)
+                download_models.download(repo)
         path = resolve_model(repo)
         print(f"[engine]   from {path}", flush=True)
         return Qwen3TTSModel.from_pretrained(

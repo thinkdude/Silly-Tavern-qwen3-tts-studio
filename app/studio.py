@@ -15,7 +15,7 @@ import gradio as gr
 import numpy as np
 import soundfile as sf
 
-from . import audio
+from . import audio, download_models, koboldcpp
 from .config import LANGUAGES, OUTPUTS_DIR, VOICES_DIR, load_settings, setup_environment
 from .engine import OutOfMemory, TTSEngine
 from .voices import VoiceLibrary
@@ -79,6 +79,19 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
         ids = [c[1] for c in choices]
         value = selected if selected in ids else (ids[0] if ids else None)
         return gr.update(choices=choices, value=value)
+
+    def export_note() -> str:
+        """Mirror the library into KoboldCpp's voices folder, if that's switched on."""
+        if not engine.settings.get("koboldcpp_export", True):
+            return ""
+        try:
+            r = koboldcpp.sync(library, engine.settings)
+        except OSError as exc:
+            return f" Couldn't update the KoboldCpp voices folder: {exc}"
+        return " Copied to the KoboldCpp voices folder; restart KoboldCpp to pick it up." if r["added"] or r["removed"] else ""
+
+    def kobold_voices() -> str:
+        return ",".join(koboldcpp.voice_names(library))
 
     with gr.Blocks(title="Qwen3-TTS Voice Studio", theme=gr.themes.Soft()) as demo:
         gr.Markdown("# Qwen3-TTS Voice Studio\nDesign a voice from a description, or clone one from a clip. Saved voices show up in **My voices** and in the voice server.")
@@ -145,6 +158,32 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                     l_delete = gr.Button("Delete voice", variant="stop")
             l_status = gr.Markdown()
 
+        # ---------------------------------------------------------- KoboldCpp
+        with gr.Tab("KoboldCpp") as t_kcpp:
+            gr.Markdown(
+                "KoboldCpp can play your saved voices for SillyTavern using small GGUF files. Every voice you save here "
+                "is copied into the folder below automatically.\n\n"
+                "**One-time KoboldCpp setup** (in the KoboldCpp launcher's **Audio** tab):\n"
+                "1. **TTS Model:** paste the model link below (KoboldCpp downloads it), or a downloaded copy of that file.\n"
+                "2. **WavTokenizer Model:** paste the tokenizer link below.\n"
+                "3. **TTS Voices Dir:** the voices folder below.\n"
+                "4. Tick **TTS Use GPU**, then launch. Use **Save Config** so you only do this once.\n\n"
+                "KoboldCpp loads voices when it starts, so **restart KoboldCpp after saving new voices**."
+            )
+            gr.Textbox(str(koboldcpp.voices_dir(engine.settings)), label="TTS Voices Dir", show_copy_button=True, interactive=False)
+            with gr.Row():
+                gr.Textbox(koboldcpp.MODEL_URL, label="TTS Model", show_copy_button=True, interactive=False)
+                gr.Textbox(koboldcpp.TOKENIZER_URL, label="WavTokenizer Model", show_copy_button=True, interactive=False)
+            gr.Markdown(
+                "**SillyTavern:** in **Extensions → TTS** choose **OpenAI Compatible**, tick **Enabled**, and enter these. "
+                "The voice names include `.wav`; that's how KoboldCpp names cloned voices."
+            )
+            gr.Textbox(koboldcpp.speech_url(engine.settings), label="Provider Endpoint", show_copy_button=True, interactive=False)
+            k_voices = gr.Textbox(kobold_voices(), label="Available Voices (comma separated)", show_copy_button=True, interactive=False)
+            with gr.Row():
+                k_sync = gr.Button("Copy all voices to the folder now")
+            k_status = gr.Markdown()
+
         # ------------------------------------------------------------ System
         with gr.Tab("System"):
             s_info = gr.JSON(label="Status")
@@ -152,6 +191,11 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                 s_refresh = gr.Button("Refresh")
                 s_unload = gr.Button("Free GPU memory (unload models)")
             gr.Markdown("Settings live in `settings.json` in the install folder. Restart the Studio after editing it.")
+            gr.Markdown("### Disk space")
+            s_disk = gr.Markdown()
+            with gr.Row():
+                s_rm_confirm = gr.Checkbox(label="Yes, remove the voice design model")
+                s_rm_design = gr.Button("Remove voice design model")
 
         # ------------------------------------------------------- handlers
         @friendly
@@ -177,7 +221,7 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
             wavs, sr = state
             idx = int(str(pick).split()[-1]) - 1 if pick else 0
             v = library.save(name, wavs[idx], sr, kind="designed", ref_text=line, language=lang, description=desc)
-            return f"Saved **{v.name}** (id `{v.id}`).", library_update(v.id)
+            return f"Saved **{v.name}** (id `{v.id}`)." + export_note(), library_update(v.id)
 
         d_save.click(save_design, [d_state, d_pick, d_name, d_desc, d_line, d_lang], [d_status, l_voice])
 
@@ -212,7 +256,7 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
             _check_text(text, xvec)
             wav, sr, _ = _clip(path)
             v = library.save(name, wav, sr, kind="cloned", ref_text="" if xvec else text, language=lang, x_vector_only=xvec)
-            return f"Saved **{v.name}** (id `{v.id}`).", library_update(v.id)
+            return f"Saved **{v.name}** (id `{v.id}`)." + export_note(), library_update(v.id)
 
         c_save.click(save_clone, [c_ref, c_text, c_xvec, c_lang, c_name], [c_status, l_voice])
 
@@ -266,9 +310,24 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
             if v is None:
                 raise ValueError("Pick a voice first.")
             library.delete(v.id)
-            return f"Deleted **{v.name}**.", library_update(), gr.update(value=False)
+            return f"Deleted **{v.name}**." + export_note(), library_update(), gr.update(value=False)
 
         l_delete.click(delete, [l_voice, l_confirm], [l_status, l_voice, l_confirm])
+
+        @friendly
+        def sync_now():
+            r = koboldcpp.sync(library, engine.settings)
+            msg = f"{r['total']} voices in `{r['folder']}`."
+            if r["added"]:
+                msg += f" Copied: {', '.join(r['added'])}."
+            if r["removed"]:
+                msg += f" Removed: {', '.join(r['removed'])}."
+            if r["added"] or r["removed"]:
+                msg += " Restart KoboldCpp to pick up the changes."
+            return msg, kobold_voices()
+
+        k_sync.click(sync_now, None, [k_status, k_voices])
+        t_kcpp.select(kobold_voices, None, k_voices)
 
         s_refresh.click(engine.status, None, s_info)
 
@@ -278,6 +337,30 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
 
         s_unload.click(unload, None, s_info)
         demo.load(engine.status, None, s_info)
+
+        def disk_md():
+            design, clone = engine.settings["design_model"], engine.settings["clone_model"]
+            lines = [f"- Voice model ({clone.split('/')[-1]}): {download_models.size_gb(clone)} GB, needed for speaking and the voice server"]
+            if download_models.is_downloaded(design):
+                lines.append(
+                    f"- Voice design model: {download_models.size_gb(design)} GB. Once your voices are designed you can remove it: "
+                    "saved voices and the voice server don't need it, and it downloads again by itself the next time you design a voice."
+                )
+            else:
+                lines.append("- Voice design model: not downloaded. It downloads by itself (about 4 GB) the first time you design a voice.")
+            return "\n".join(lines)
+
+        @friendly
+        def remove_design(confirmed):
+            if not confirmed:
+                raise ValueError("Tick the box to confirm removing the voice design model.")
+            engine.unload("design")
+            freed = download_models.remove(engine.settings["design_model"])
+            return f"Removed the voice design model and freed {freed} GB.\n\n" + disk_md(), gr.update(value=False)
+
+        s_rm_design.click(remove_design, [s_rm_confirm], [s_disk, s_rm_confirm])
+        s_refresh.click(disk_md, None, s_disk)
+        demo.load(disk_md, None, s_disk)
         demo.load(show_voice, [l_voice], [l_info, l_refclip, l_newname, l_reftext])
 
     return demo
@@ -292,7 +375,13 @@ def main() -> None:
     setup_environment()
     settings = load_settings()
     engine = TTSEngine(settings, idle_unload_minutes=settings.get("studio_idle_unload_minutes", 10))
-    demo = build(engine, VoiceLibrary())
+    library = VoiceLibrary()
+    if settings.get("koboldcpp_export", True):
+        try:
+            koboldcpp.sync(library, settings)
+        except OSError as exc:
+            print(f"[studio] Couldn't update the KoboldCpp voices folder: {exc}")
+    demo = build(engine, library)
     port = args.port or int(settings.get("studio_port", 7860))
     print(f"\nVoice Studio: http://127.0.0.1:{port}\n(Leave this window open while you use it. Close it to stop.)\n")
     demo.queue(default_concurrency_limit=1).launch(

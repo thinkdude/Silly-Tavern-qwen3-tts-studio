@@ -6,4 +6,7 @@ uvicorn
 soundfile>=0.12
 lameenc>=1.7
 huggingface_hub
+# Needed to download the models. huggingface_hub only pulls it in when platform_machine
+# is lowercase "amd64", but Windows reports "AMD64", so list it explicitly.
+hf_xet>=1.1.3,<2
 numpy

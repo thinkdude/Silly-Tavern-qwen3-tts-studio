@@ -56,6 +56,10 @@ DEFAULTS: dict[str, Any] = {
     # Optional. When set, API clients must send "Authorization: Bearer <key>".
     "api_key": "",
     "default_language": "Auto",
+    # Saved voices are copied here for KoboldCpp ("TTS Voices Dir"). Relative to the install folder.
+    "koboldcpp_export": True,
+    "koboldcpp_voices_dir": "koboldcpp_voices",
+    "koboldcpp_url": "http://127.0.0.1:5001",
     "gpu_name": "",
     "vram_gb": 0.0,
 }

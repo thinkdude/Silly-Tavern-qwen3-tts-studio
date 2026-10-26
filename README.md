@@ -3,7 +3,7 @@
 Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with two simple apps:
 
 - **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip, then save it to your voice library.
-- **Voice Server** for using those voices in other programs. It speaks the OpenAI text-to-speech API, so SillyTavern and other OpenAI-compatible apps can use it. It has a control panel showing the exact settings to paste into SillyTavern.
+- **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server** (full model, most accurate voices). Both use the OpenAI text-to-speech API that SillyTavern understands.
 
 Everything (Python, packages, models, your voices) stays inside one folder, so it can live on your G: drive without touching C:.
 
@@ -42,6 +42,7 @@ Run these from a command prompt in the install folder:
 | `-Fresh` | Always installs a private PyTorch, even if one could be reused |
 | `-UsePython <path>` | Reuses PyTorch from that `python.exe` |
 | `-Yes` | Asks no questions (it reuses an existing PyTorch if one is found) |
+| `-KeepCache` | Keeps the download caches instead of deleting them at the end |
 
 ## Make voices: `start_studio.bat`
 
@@ -53,7 +54,31 @@ The Studio opens in your browser at http://127.0.0.1:7860. The first action in e
 
 **My voices.** Try any saved voice with your own text, change its speed, and download the result (also saved in `outputs\`). You can rename voices, fix a transcript, or delete them here.
 
-## Use voices in other programs: `start_server.bat`
+## Play voices with KoboldCpp
+
+[KoboldCpp](https://github.com/LostRuins/koboldcpp) can run Qwen3-TTS from a small GGUF file (the 0.6B model at 8-bit) and clone voices from a folder of clips. The Studio copies every voice you save into that folder (`koboldcpp_voices\` in the install folder) automatically, and its **KoboldCpp** tab shows everything below with copy buttons.
+
+**One-time KoboldCpp setup.** In the KoboldCpp launcher's **Audio** tab:
+
+1. **TTS Model:** `https://huggingface.co/koboldcpp/tts/resolve/main/qwen3-tts-0.6b-q8_0.gguf` (KoboldCpp downloads it, or point it at a downloaded copy)
+2. **WavTokenizer Model:** `https://huggingface.co/koboldcpp/tts/resolve/main/qwen3-tts-tokenizer-f16.gguf`
+3. **TTS Voices Dir:** the `koboldcpp_voices` folder inside your install folder
+4. Tick **TTS Use GPU**, click **Save Config** so you only do this once, then **Launch**.
+
+**SillyTavern.** In **Extensions → TTS** choose **OpenAI Compatible**, tick **Enabled**, and set:
+
+- **Provider Endpoint:** `http://127.0.0.1:5001/v1/audio/speech` (KoboldCpp's default port)
+- **Available Voices:** your voice ids with `.wav` on the end, e.g. `grumpy-wizard.wav,dad.wav`. That's how KoboldCpp names cloned voices.
+
+Then click **Reload** and pick a voice for each character.
+
+**Good to know:**
+- KoboldCpp reads the voices folder when it starts, so **restart KoboldCpp after saving new voices**.
+- KoboldCpp clones from the sound of the clip only and can't use its transcript, so its voices are a little less exact than the Studio's previews or the Voice Server. If a voice matters a lot, compare it with the Voice Server.
+- Already using KoboldCpp as SillyTavern's text model? The TTS runs in the same KoboldCpp, so nothing else needs to run.
+- To stop exporting voices, set `"koboldcpp_export": false` in `settings.json`. To use a different folder, change `koboldcpp_voices_dir`.
+
+## Or use the Voice Server: `start_server.bat`
 
 The server runs at **http://127.0.0.1:8890** and opens its control panel at http://127.0.0.1:8890/ui. Keep the window open while you use it. It loads the voice model at startup so the first line plays without a long wait.
 
@@ -97,6 +122,13 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `/ui` | Control panel |
 | `/docs` | Interactive API docs |
 
+## Saving disk space
+
+- **Download caches** are deleted automatically at the end of the install, which frees several GB. (`install.bat -KeepCache` keeps them.)
+- **Voice design model (about 4 GB):** once your voices are designed, open the Studio's **System** tab and click **Remove voice design model**. Saved voices, cloning and the voice server don't need it. It downloads again by itself the next time you design a voice.
+- **Smaller voice model:** the 0.6B clone model saves about 2 GB, with slightly less accurate voices. See `clone_model` in Settings below.
+- **Reuse an existing PyTorch** if you have one (see above). That skips the roughly 3 GB PyTorch download.
+
 ## Settings
 
 `settings.json` is created by the installer. Close the Studio and server before editing it.
@@ -111,6 +143,9 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `server_port`, `studio_port` | 8890, 7860 | Ports |
 | `server_host` | `127.0.0.1` | Use `0.0.0.0` to allow other PCs on your network |
 | `api_key` | empty | When set, apps must send it as a Bearer token (put it in SillyTavern's API key field) |
+| `koboldcpp_export` | on | Copy saved voices into the KoboldCpp voices folder |
+| `koboldcpp_voices_dir` | `koboldcpp_voices` | That folder (relative to the install folder, or a full path) |
+| `koboldcpp_url` | `http://127.0.0.1:5001` | Where KoboldCpp runs, for the settings shown in the Studio |
 
 To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base"` and run `install.bat` once to download it.
 
@@ -135,6 +170,7 @@ G:\Qwen3TTS\
   install.bat, start_studio.bat, start_server.bat
   app\          the Studio, server and engine code
   voices\       your saved voices (one folder each: voice.json + reference.wav)
+  koboldcpp_voices\  copies of your voices for KoboldCpp (one .wav per voice)
   outputs\      audio made in the Studio
   models\       downloaded model weights
   settings.json your settings

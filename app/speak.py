@@ -1,8 +1,11 @@
 """Speak: type what you want said, pick one of your saved voices, and hear it.
 
-Start it with start_speak.bat (or `python -m app.speak`). When the voice server
-is already running it does the speaking, so the voice model isn't loaded onto
-the GPU twice. Otherwise this app loads its own copy.
+Start it with start_speak.bat (or `python -m app.speak`). It speaks with either
+voice model:
+  * full: Qwen3-TTS itself. When the voice server is already running it does the
+    speaking, so the model isn't loaded onto the GPU twice. Otherwise this app
+    loads its own copy.
+  * gguf: the small GGUF model, run by KoboldCpp (see gguf.py).
 """
 
 from __future__ import annotations
@@ -22,8 +25,8 @@ import gradio as gr
 import numpy as np
 import soundfile as sf
 
-from . import audio
-from .config import LANGUAGES, OUTPUTS_DIR, load_settings, setup_environment
+from . import audio, gguf
+from .config import LANGUAGES, OUTPUTS_DIR, load_settings, save_settings, setup_environment
 from .engine import TTSEngine
 from .studio import VOICE_DEFAULT_LANG, friendly
 from .voices import Voice, VoiceLibrary
@@ -35,6 +38,10 @@ EARLIER_LINES = 10
 SERVER_CHECK_S = 10
 NO_VOICE = "Pick a voice first. No voices yet? Make one in the Voice Studio (start_studio.bat), then click Refresh voices."
 PREF_DEFAULTS = {"voice": None, "language": VOICE_DEFAULT_LANG, "speed": 1.0, "format": "wav"}
+ENGINES = [
+    ("Full model (best quality)", "full"),
+    ("GGUF with KoboldCpp (smaller, lighter on the GPU)", "gguf"),
+]
 
 # Talking to the voice server on this PC must never go through a system proxy.
 _local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -73,13 +80,31 @@ class _ServerGone(Exception):
 
 
 class Speaker:
-    """Speaks through the voice server when it's running, otherwise with its own engine."""
+    """Speaks with the GGUF model or the full one. The full one runs in the voice
+    server when that's running, otherwise in this app's own engine."""
 
-    def __init__(self, engine: TTSEngine, settings: dict):
+    def __init__(self, engine: TTSEngine, settings: dict, kobold: gguf.KoboldTTS | None = None):
         self.engine = engine
         self.settings = settings
+        self.kobold = kobold
         self.server = server_url(settings)
         self._running, self._checked = False, 0.0
+
+    @property
+    def choice(self) -> str:
+        return "gguf" if self.settings.get("speak_engine") == "gguf" and self.kobold else "full"
+
+    def set_choice(self, choice: str) -> None:
+        """Switch models, free the other one's GPU memory and remember the choice in settings.json."""
+        choice = "gguf" if choice == "gguf" else "full"
+        self.settings["speak_engine"] = choice
+        saved = load_settings()  # keep any other edits made to the file meanwhile
+        saved["speak_engine"] = choice
+        save_settings(saved)
+        if choice == "gguf":
+            self.engine.unload()
+        elif self.kobold:
+            self.kobold.stop()
 
     def server_running(self) -> bool:
         if time.time() - self._checked < SERVER_CHECK_S:
@@ -94,13 +119,28 @@ class Speaker:
         return running
 
     def warm_up(self) -> None:
+        if self.choice == "gguf":
+            if not gguf.missing(self.settings):
+                self.kobold.warm_up()
+            return
+        if self.server_running():
+            print(f"[speak] The voice server is running at {self.server}, so it does the speaking.")
+            return
         try:
             self.engine.preload("clone")
         except Exception as exc:
             print(f"[speak] Could not load the voice model yet: {exc}")
 
-    def say(self, voice: Voice, text: str, language: str | None = None, speed: float = 1.0) -> tuple[np.ndarray, int, bool]:
-        """Returns (audio, sample rate, whether the voice server spoke it)."""
+    def free(self) -> None:
+        self.engine.unload()
+        if self.kobold:
+            self.kobold.stop()
+
+    def say(self, voice: Voice, text: str, language: str | None = None, speed: float = 1.0) -> tuple[np.ndarray, int, str]:
+        """Returns (audio, sample rate, what spoke it: "gguf", "server" or "full")."""
+        if self.choice == "gguf":
+            wav, sr = self.kobold.speak(text, voice, language=language, speed=speed)
+            return wav, sr, "gguf"
         if self.server_running():
             try:
                 wav, sr = self._via_server(voice.id, text, language, speed)
@@ -109,9 +149,9 @@ class Speaker:
             else:
                 if self.engine.loaded():
                     self.engine.unload()  # the server has its own copy, so free ours
-                return wav, sr, True
+                return wav, sr, "server"
         wav, sr = self.engine.speak(text, voice=voice, language=language, speed=speed)
-        return wav, sr, False
+        return wav, sr, "full"
 
     def _via_server(self, voice_id: str, text: str, language: str | None, speed: float) -> tuple[np.ndarray, int]:
         body = {"input": text, "voice": voice_id, "response_format": "wav", "speed": speed}
@@ -175,6 +215,14 @@ def build(speaker: Speaker, library: VoiceLibrary) -> gr.Blocks:
         with gr.Row(equal_height=True):
             voice = gr.Dropdown(voice_choices(), label="Voice", scale=4)
             refresh = gr.Button("Refresh voices", scale=1)
+        model = gr.Radio(
+            ENGINES,
+            value=speaker.choice,
+            label="Voice model",
+            info="The full model sounds closest to your voices. The GGUF model needs less GPU memory; "
+            "it copies the sound of each voice but can't use its transcript.",
+            visible=speaker.kobold is not None,
+        )
         text = gr.Textbox(
             label="What should it say?",
             placeholder="Type something, then press Enter.",
@@ -206,28 +254,46 @@ def build(speaker: Speaker, library: VoiceLibrary) -> gr.Blocks:
 
         # ------------------------------------------------------- handlers
         @friendly
-        def speak(voice_id, words, language, spd, file_type, hist):
+        def speak(voice_id, words, language, spd, file_type, hist, progress=gr.Progress(track_tqdm=True)):
             v = library.get(voice_id) if voice_id else None
             if v is None:
                 raise ValueError(NO_VOICE)
             if not (words or "").strip():
                 raise ValueError("Type something to say first.")
             started = time.time()
-            wav, sr, via_server = speaker.say(v, words, None if language == VOICE_DEFAULT_LANG else language, float(spd))
+            wav, sr, source = speaker.say(v, words, None if language == VOICE_DEFAULT_LANG else language, float(spd))
             path = save_output(v.id, words, wav, sr, file_type if file_type in FORMATS else "wav")
             note = f"Saved as `{path.name}` in the outputs folder. Took {time.time() - started:.0f}s"
-            note += ", spoken by the voice server that's already running." if via_server else "."
+            note += {
+                "gguf": " with the GGUF model.",
+                "server": ", spoken by the voice server that's already running.",
+            }.get(source, ".")
             hist = [{"path": str(path), "label": f"{v.name}: {_short(words)}"}, *(hist or [])][: EARLIER_LINES + 1]
             return str(path), note, hist
 
         go.click(speak, [voice, text, lang, speed, fmt, history], [out, status, history])
         refresh.click(voices_update, [voice], [voice])
 
+        @friendly
+        def switch_model(choice, progress=gr.Progress(track_tqdm=True)):
+            speaker.set_choice(choice)
+            if choice != "gguf":
+                return "Using the full model. It loads with the next line (or the voice server speaks, if it's running)."
+            if gguf.missing(speaker.settings):
+                gguf.install(speaker.settings)  # about 2.3 GB, once
+            threading.Thread(target=speaker.kobold.warm_up, daemon=True).start()
+            return (
+                "Using the GGUF model. KoboldCpp is starting in the background; the first line can take "
+                "a minute. It also restarts by itself when you use a voice it hasn't loaded yet."
+            )
+
+        model.input(switch_model, [model], [status])
+
         def restore(saved):
             p = {**PREF_DEFAULTS, **(saved or {})}
-            return voices_update(p["voice"]), p["language"], p["speed"], p["format"]
+            return voices_update(p["voice"]), p["language"], p["speed"], p["format"], speaker.choice
 
-        demo.load(restore, [prefs], [voice, lang, speed, fmt])
+        demo.load(restore, [prefs], [voice, lang, speed, fmt, model])
 
         def remember(v, language, spd, file_type):
             return {"voice": v, "language": language, "speed": spd, "format": file_type}
@@ -242,7 +308,7 @@ def build(speaker: Speaker, library: VoiceLibrary) -> gr.Blocks:
         open_btn.click(open_outputs, None, None, queue=False)
 
         def free():
-            speaker.engine.unload()
+            speaker.free()
             return "Freed this app's GPU memory. The voice model loads again with the next line."
 
         free_btn.click(free, None, [status])
@@ -259,12 +325,9 @@ def main() -> None:
     setup_environment()
     settings = load_settings()
     engine = TTSEngine(settings, idle_unload_minutes=settings.get("speak_idle_unload_minutes", 10))
-    speaker = Speaker(engine, settings)
     library = VoiceLibrary()
-    if speaker.server_running():
-        print(f"[speak] The voice server is running at {speaker.server}, so it does the speaking.")
-    else:
-        threading.Thread(target=speaker.warm_up, daemon=True).start()
+    speaker = Speaker(engine, settings, gguf.KoboldTTS(settings, library))
+    threading.Thread(target=speaker.warm_up, daemon=True).start()
     port = args.port or int(settings.get("speak_port", 7861))
     print(f"\nSpeak: http://127.0.0.1:{port}\n(Leave this window open while you use it. Close it to stop.)\n")
     build(speaker, library).queue(default_concurrency_limit=1).launch(

@@ -56,6 +56,15 @@ DEFAULTS: dict[str, Any] = {
     # The type-and-speak app (start_speak.bat).
     "speak_port": 7861,
     "speak_idle_unload_minutes": 10,
+    # "full" (clone_model above) or "gguf" (KoboldCpp with the GGUF files below). Speak's switch sets it.
+    "speak_engine": "full",
+    # GGUF files from huggingface.co/koboldcpp/tts (kept in models/gguf), or full paths to your own copies.
+    "gguf_model": "qwen3-tts-0.6b-q8_0.gguf",
+    "gguf_tokenizer": "qwen3-tts-tokenizer-f16.gguf",
+    # Empty uses the KoboldCpp the installer downloads into .tools/koboldcpp.
+    "koboldcpp_exe": "",
+    # Where Speak runs its own KoboldCpp, apart from yours on koboldcpp_url.
+    "gguf_port": 5002,
     # Optional. When set, API clients must send "Authorization: Bearer <key>".
     "api_key": "",
     "default_language": "Auto",

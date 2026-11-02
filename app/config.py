@@ -36,6 +36,20 @@ LANGUAGES = [
     "Spanish",
     "Italian",
 ]
+# The language codes used by captions and speech-to-text.
+LANG_CODES = {
+    "English": "en",
+    "Chinese": "zh",
+    "Japanese": "ja",
+    "Korean": "ko",
+    "German": "de",
+    "French": "fr",
+    "Russian": "ru",
+    "Portuguese": "pt",
+    "Spanish": "es",
+    "Italian": "it",
+}
+CODE_LANGS = {code: name for name, code in LANG_CODES.items()}
 
 DEFAULTS: dict[str, Any] = {
     # Filled in by `python -m app.configure` during install.
@@ -72,6 +86,8 @@ DEFAULTS: dict[str, Any] = {
     "koboldcpp_export": True,
     "koboldcpp_voices_dir": "koboldcpp_voices",
     "koboldcpp_url": "http://127.0.0.1:5001",
+    # Speech-to-text for filling in a clip's transcript (Hugging Face id, or a folder).
+    "stt_model": "openai/whisper-large-v3-turbo",
     "gpu_name": "",
     "vram_gb": 0.0,
 }

@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from app import youtube
+from app import transcribe, youtube
 
 # Automatic captions: one event per line, each word with its own offset, plus line-break events.
 ASR = {
@@ -193,9 +193,16 @@ def fake_video(source, tmp_path, monkeypatch):
         id="abc123", title="A talk", duration=20.0, path=source, info={"automatic_captions": {"en-orig": _tracks("en")}}
     )
     video.captions["en"] = (youtube.parse_json3(ASR), "automatic")
-    calls = []
+    calls = Calls()
     monkeypatch.setattr(youtube, "download", lambda url, progress=None: calls.append(url) or video)
+    calls.video = video
+    calls.heard = []  # speech-to-text calls; it finds no words unless a test says otherwise
+    monkeypatch.setattr(transcribe, "words", lambda wav, sr, settings, language=None: calls.heard.append(language) or ([], None))
     return calls
+
+
+class Calls(list):
+    pass
 
 
 @needs_ffmpeg
@@ -207,8 +214,9 @@ def test_make_clip(fake_video):
     assert fake_video == ["https://youtu.be/abc123?t=1.3"]
     assert (clip.start, clip.end) == (pytest.approx(1.4), pytest.approx(6.4))
     assert clip.transcript == "there everyone welcome back today"
-    assert clip.captions == "automatic"
+    assert clip.source == "automatic"
     assert clip.language == "English"  # follows the video, not the dropdown
+    assert fake_video.heard == []  # captions, so no speech-to-text
     assert clip.path.exists() and clip.path.parent == youtube.CLIPS_DIR
     wav, sr = sf.read(str(clip.path))
     assert sr == 44100 and 2 < len(wav) / sr <= 5.1 and clip.seconds == pytest.approx(len(wav) / sr)
@@ -218,9 +226,47 @@ def test_make_clip(fake_video):
 @needs_ffmpeg
 def test_make_clip_typed_start_wins_and_rejects_start_past_the_end(fake_video):
     clip = youtube.make_clip("https://youtu.be/abc123?t=1.3", "0:10", 5, isolate=False)
-    assert clip.start == 10 and clip.transcript == "" and clip.captions == ""
+    assert (clip.start, clip.end) == (10, 15)
+    assert clip.transcript == "" and clip.source == ""
+    assert fake_video.heard == ["en"]  # no captions there, so speech-to-text was asked (and heard nothing)
     with pytest.raises(ValueError, match="only 0:20 long"):
         youtube.make_clip("https://youtu.be/abc123", "0:25", 5, isolate=False)
+
+
+@needs_ffmpeg
+def test_make_clip_uses_speech_to_text_without_captions(fake_video, monkeypatch):
+    fake_video.video.info, fake_video.video.captions = {}, {}  # no captions, language unknown
+    seen = {}
+
+    def words(wav, sr, settings, language=None):
+        seen.update(seconds=len(wav) / sr, settings=settings, language=language)
+        # Times are from the start of the audio it gets, which starts 1 s before the asked-for start.
+        return [(0.5, 0.9, "Before"), (1.2, 1.6, " hello"), (1.7, 2.2, " from"), (2.4, 3.0, " speech"),
+                (5.9, 6.3, " to"), (6.4, 6.9, " text")], "de"  # fmt: skip
+
+    monkeypatch.setattr(transcribe, "words", words)
+    clip = youtube.make_clip(
+        "https://youtu.be/abc123", "0:10", 5, isolate=False, device="cuda:0", settings={"stt_model": "x"}
+    )
+    assert seen == {"seconds": pytest.approx(7, abs=0.01), "settings": {"stt_model": "x", "device": "cuda:0"}, "language": None}
+    assert clip.transcript == "hello from speech to" and clip.source == "speech"
+    assert (clip.start, clip.end) == (pytest.approx(10.1), pytest.approx(15.4))  # whole words
+    assert clip.language == "German"  # what Whisper heard
+
+
+@needs_ffmpeg
+def test_make_clip_transcript_choices(fake_video, monkeypatch):
+    clip = youtube.make_clip("https://youtu.be/abc123", "0:01.3", 5, isolate=False, transcript="none")
+    assert clip.transcript == "" and clip.source == "" and fake_video.heard == []
+    clip = youtube.make_clip("https://youtu.be/abc123", "0:01.3", 5, isolate=False, transcript="speech")
+    assert fake_video.heard == ["en"]  # skipped the captions, speech-to-text in the video's language
+
+    def broken(wav, sr, settings, language=None):
+        raise ValueError("Couldn't load the speech-to-text model (offline).")
+
+    monkeypatch.setattr(transcribe, "words", broken)
+    clip = youtube.make_clip("https://youtu.be/abc123", "0:10", 5, isolate=False)
+    assert clip.transcript == "" and "offline" in clip.note and clip.path.exists()
 
 
 @needs_ffmpeg
@@ -242,6 +288,11 @@ def test_make_clip_says_when_there_is_no_voice(fake_video, monkeypatch):
     monkeypatch.setattr(youtube, "remove_background", lambda wav, device: wav.mean(0) * 0.001)
     with pytest.raises(ValueError, match="hardly any voice"):
         youtube.make_clip("https://youtu.be/abc123", "0:02", 6, isolate=True)
+
+
+def test_speech_units_reach_into_the_pause_after_each_word():
+    units = youtube._speech_units([(0.0, 0.4, "a"), (0.5, 0.8, " b"), (2.0, 2.5, " c")], 10)
+    assert [(u.start, u.end) for u in units] == [(10.0, 10.5), (10.5, pytest.approx(11.1)), (12.0, 12.8)]
 
 
 def test_remove_background_runs_demucs(monkeypatch):
@@ -291,3 +342,19 @@ def test_download_errors_read_well():
     msg = str(youtube._download_error(Exception("ERROR: [generic] Unable to download webpage: HTTP Error 404")))
     assert msg.startswith("Couldn't get that video: Unable to download webpage: HTTP Error 404 ")
     assert youtube.UPDATE_HINT in msg
+
+
+def test_missing_packages_say_to_run_the_installer(monkeypatch):
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_demucs(name, *args, **kwargs):
+        if name.startswith("demucs"):
+            raise ModuleNotFoundError(f"No module named '{name}'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(youtube, "_demucs", None)
+    monkeypatch.setattr(builtins, "__import__", no_demucs)
+    with pytest.raises(ValueError, match="run install.bat once"):
+        youtube.remove_background(np.zeros((2, 44100), dtype=np.float32))

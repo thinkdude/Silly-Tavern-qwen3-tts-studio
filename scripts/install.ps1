@@ -355,18 +355,18 @@ if ($SkipModels -or $SkipGguf) {
     }
 }
 
-# --- 6c. The music remover for cloning from YouTube ----------------------------------
+# --- 6c. Music remover and speech-to-text, for cloning from YouTube and transcribing clips ---
 if ($SkipModels) {
-    Step 'Skipping the music remover model. It downloads the first time you get a clip from YouTube.'
+    Step 'Skipping the music remover and speech-to-text models. They download the first time they are needed.'
 } else {
-    Step 'Downloading the music remover model for YouTube clips'
+    Step 'Downloading the music remover and speech-to-text models (about 1.8 GB, resumes if interrupted)'
     $ErrorActionPreference = 'Continue'
     & $py -m app.youtube --setup
     $code = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     if ($code -ne 0) {
         Warn 'That failed, but everything else is installed. Run install.bat again to retry,'
-        Warn 'or it downloads the first time you get a clip from YouTube.'
+        Warn 'or they download the first time they are needed.'
     }
 }
 

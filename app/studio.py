@@ -15,8 +15,8 @@ import gradio as gr
 import numpy as np
 import soundfile as sf
 
-from . import audio, download_models, koboldcpp, youtube
-from .config import LANGUAGES, OUTPUTS_DIR, VOICES_DIR, load_settings, save_settings, setup_environment
+from . import audio, download_models, koboldcpp, transcribe, youtube
+from .config import CODE_LANGS, LANGUAGES, OUTPUTS_DIR, VOICES_DIR, load_settings, save_settings, setup_environment
 from .engine import OutOfMemory, SilentOutput, TTSEngine
 from .voices import VoiceLibrary
 
@@ -44,7 +44,7 @@ DESCRIPTION_EXAMPLES = [
 TIPS = """
 **Tips for a good clone**
 - 5 to 15 seconds of one person talking, with no music or background noise.
-- Type exactly what is said in the clip. Clones with a transcript are noticeably better.
+- Give it exactly what is said in the clip (**Transcribe** fills it in for you to check). Clones with a transcript are noticeably better.
 - The clone copies the clip's mood and recording quality, so pick a clip that sounds the way you want.
 """
 
@@ -52,7 +52,7 @@ YOUTUBE_HELP = """
 Paste a link to a video where the voice talks clearly, ideally on its own. Find a good stretch on YouTube and put
 its time in **Start at**, or right-click the video at that moment, choose **Copy video URL at current time**, paste
 that link and leave Start at empty. The clip lands in **Reference clip** below, with a transcript from the video's
-captions when it has some. Other video sites work too.
+captions, or from speech-to-text when it has none, for you to check and correct. Other video sites work too.
 
 Only clone voices you have permission to use.
 """
@@ -137,13 +137,27 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                     )
                 with gr.Row():
                     y_clean = gr.Checkbox(value=True, label="Remove music and background noise")
+                    y_transcript = gr.Dropdown(
+                        [
+                            ("YouTube captions, or speech-to-text if there are none", "captions"),
+                            ("Speech-to-text", "speech"),
+                            ("None, I'll type it", "none"),
+                        ],
+                        value="captions",
+                        label="Transcript from",
+                    )
                     y_go = gr.Button("Get clip", variant="primary")
                 y_status = gr.Markdown()
                 y_update = gr.Button("Update the YouTube downloader", size="sm")
             with gr.Row():
                 with gr.Column():
                     c_ref = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference clip")
-                    c_text = gr.Textbox(label="Exactly what is said in the clip", lines=3)
+                    c_text = gr.Textbox(
+                        label="Exactly what is said in the clip",
+                        info="Type it, or click Transcribe and fix any mistakes",
+                        lines=3,
+                    )
+                    c_transcribe = gr.Button("Transcribe the clip", size="sm")
                     c_xvec = gr.Checkbox(label="I don't have a transcript (works, but the clone is less accurate)")
                     c_lang = gr.Dropdown(LANGUAGES, value="English", label="Language")
                 with gr.Column():
@@ -174,8 +188,10 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                     l_newname = gr.Textbox(label="New name")
                     l_rename = gr.Button("Rename")
                 with gr.Row():
-                    l_reftext = gr.Textbox(label="Transcript of the reference clip", lines=2)
-                    l_savetext = gr.Button("Save transcript")
+                    l_reftext = gr.Textbox(label="Transcript of the reference clip", lines=2, scale=4)
+                    with gr.Column(scale=1, min_width=160):
+                        l_transcribe = gr.Button("Transcribe", size="sm")
+                        l_savetext = gr.Button("Save transcript")
                 with gr.Row():
                     l_confirm = gr.Checkbox(label="Yes, delete it for good")
                     l_delete = gr.Button("Delete voice", variant="stop")
@@ -298,35 +314,74 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
 
         c_save.click(save_clone, [c_ref, c_text, c_xvec, c_lang, c_name], [c_status, l_voice])
 
+        def check_note(language, lang):
+            if language == lang:
+                return ""
+            if language == "Auto":
+                return " Its language isn't one Qwen3-TTS lists, so Language is set to **Auto**."
+            return f" Language set to **{language}** to match."
+
         @friendly
-        def youtube_clip(url, start, length, clean, lang, progress=gr.Progress()):
+        def youtube_clip(url, start, length, clean, how, lang, progress=gr.Progress()):
             clip = youtube.make_clip(
                 url,
                 start,
                 length,
                 language=lang,
                 isolate=clean,
+                transcript=how,
                 device=engine.settings.get("device", "cpu"),
+                settings=engine.settings,
                 progress=lambda f, desc: progress(f, desc=desc),
             )
             where = f"{youtube.format_time(clip.start)} to {youtube.format_time(clip.end)}"
-            msg = [f"Got **{clip.seconds:.1f} seconds** of *{clip.title}* ({where}). Have a listen in **Reference clip** below."]
+            msg = f"Got **{clip.seconds:.1f} seconds** of *{clip.title}* ({where}). Have a listen in **Reference clip** below."
             if clip.transcript:
-                source = "the video's captions" if clip.captions == "written" else "YouTube's automatic captions"
-                msg.append(f"The transcript comes from {source}: check it matches what you hear, especially the first and last words.")
+                source = {
+                    "written": "the video's captions",
+                    "automatic": "YouTube's automatic captions",
+                    "speech": "speech-to-text",
+                }.get(clip.source, "the video")
+                msg += (
+                    f" The transcript is from {source}: **check it against the clip and fix any mistakes** "
+                    "before you preview, especially the first and last words."
+                )
+            elif how == "none":
+                msg += " Type what's said in the clip (or click **Transcribe the clip**)."
             else:
-                msg.append("The video has no captions for that part, so type what's said (or tick \"I don't have a transcript\").")
-            if clip.language == "Auto" and lang != "Auto":
-                msg.append("The video's language isn't one Qwen3-TTS lists, so Language is set to **Auto**.")
-            elif clip.language != lang:
-                msg.append(f"Language set to **{clip.language}** to match the video.")
-            msg.append(
-                "Not quite right? Change the start time and click **Get clip** again (quick now the video is downloaded), "
-                "or trim the clip with the scissors on the player."
+                msg += " No words were found in that part, so type what's said (or tick \"I don't have a transcript\")."
+            if clip.note:
+                msg += f" ({clip.note})"
+            msg += check_note(clip.language, lang)
+            msg += (
+                " Not quite right? Change the start time and click **Get clip** again (quick now the video is downloaded), "
+                "or trim the clip with the scissors on the player and click **Transcribe the clip**."
             )
-            return str(clip.path), clip.transcript, gr.update(value=False) if clip.transcript else gr.update(), clip.language, " ".join(msg)
+            return str(clip.path), clip.transcript, gr.update(value=False) if clip.transcript else gr.update(), clip.language, msg
 
-        y_go.click(youtube_clip, [y_url, y_start, y_len, y_clean, c_lang], [c_ref, c_text, c_xvec, c_lang, y_status])
+        y_go.click(
+            youtube_clip, [y_url, y_start, y_len, y_clean, y_transcript, c_lang], [c_ref, c_text, c_xvec, c_lang, y_status]
+        )
+
+        def _transcribe(path, progress):
+            if not path:
+                raise ValueError("Upload, record or get a clip first.")
+            first = "" if transcribe.is_downloaded(engine.settings) else " (downloading the model first, about 1.6 GB)"
+            progress(0.2, desc="Writing down what's said" + first)
+            wav, sr = audio.load_audio(path)
+            text, code = transcribe.text(wav, sr, engine.settings)
+            if not text:
+                raise ValueError("No words found in the clip. Is it someone speaking?")
+            return text, CODE_LANGS.get((code or "").split("-")[0], "Auto") if code else None
+
+        @friendly
+        def transcribe_clip(path, lang, progress=gr.Progress()):
+            text, language = _transcribe(path, progress)
+            language = language or lang
+            note = "Transcribed. **Check it against the clip and fix any mistakes**, then click **Preview clone**."
+            return text, gr.update(value=False), language, note + check_note(language, lang)
+
+        c_transcribe.click(transcribe_clip, [c_ref, c_lang], [c_text, c_xvec, c_lang, c_status])
 
         @friendly
         def update_downloader(progress=gr.Progress()):
@@ -378,6 +433,16 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
         l_savetext.click(save_text, [l_voice, l_reftext], [l_status])
 
         @friendly
+        def transcribe_voice(voice_id, progress=gr.Progress()):
+            v = library.get(voice_id)
+            if v is None:
+                raise ValueError("Pick a voice first.")
+            text, _ = _transcribe(str(v.reference_path), progress)
+            return text, "Transcribed. Check it against the reference clip, fix any mistakes, then click **Save transcript**."
+
+        l_transcribe.click(transcribe_voice, [l_voice], [l_reftext, l_status])
+
+        @friendly
         def delete(voice_id, confirmed):
             if not confirmed:
                 raise ValueError("Tick the box to confirm deleting.")
@@ -408,6 +473,7 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
 
         def unload():
             engine.unload()
+            transcribe.unload()
             return engine.status()
 
         s_unload.click(unload, None, s_info)

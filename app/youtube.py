@@ -5,15 +5,16 @@ Paste a link and say where the speaker talks, and this:
      video reuse it,
   2. cuts out that stretch with ffmpeg,
   3. removes music and background noise with Demucs (optional),
-  4. reads what's said from the video's captions when it has some, so the clone
-     gets a transcript. The cut is moved to the nearest word boundaries so the
-     transcript matches the clip.
+  4. writes down what's said, so the clone gets a transcript: from the video's
+     captions when it has some, otherwise with speech-to-text (transcribe.py).
+     The cut is moved to the nearest word boundaries so the transcript matches
+     the clip. The Studio shows it for checking and correcting.
 
 install.bat installs what it needs: yt-dlp with Deno (YouTube needs a JavaScript
-runtime), ffmpeg (from imageio-ffmpeg) and Demucs, and downloads the Demucs
-model. Everything stays inside the install folder.
+runtime), ffmpeg (from imageio-ffmpeg) and Demucs, and downloads the Demucs and
+Whisper models. Everything stays inside the install folder.
 
-    python -m app.youtube --setup            download the Demucs model now
+    python -m app.youtube --setup            download the Demucs and Whisper models now
     python -m app.youtube --update           update yt-dlp, for when YouTube downloads stop working
     python -m app.youtube URL --start 1:23   make a clip from the command line
 """
@@ -41,8 +42,8 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 import numpy as np
 import soundfile as sf
 
-from . import audio
-from .config import CACHE_DIR, ROOT, setup_environment
+from . import audio, transcribe
+from .config import CACHE_DIR, CODE_LANGS, LANG_CODES, ROOT, setup_environment
 
 WORK_DIR = CACHE_DIR / "youtube"
 CLIPS_DIR = WORK_DIR / "clips"
@@ -52,21 +53,10 @@ MIN_LEN, MAX_LEN, DEFAULT_LEN = 5, 60, 15
 DEMUCS_MODEL = "htdemucs"
 SEP_SR = 44100  # what Demucs works at
 
-# Qwen3-TTS's languages (config.LANGUAGES) and their caption language codes.
-LANG_CODES = {
-    "English": "en",
-    "Chinese": "zh",
-    "Japanese": "ja",
-    "Korean": "ko",
-    "German": "de",
-    "French": "fr",
-    "Russian": "ru",
-    "Portuguese": "pt",
-    "Spanish": "es",
-    "Italian": "it",
-}
-CODE_LANGS = {code: name for name, code in LANG_CODES.items()}
-
+NOT_INSTALLED = (
+    "{what} isn't installed yet. Close the Studio, run install.bat once to add it, then start the Studio again. "
+    "Until then you can untick 'Remove music and background noise'."
+)
 UPDATE_HINT = "If YouTube downloads stopped working, click 'Update the YouTube downloader' and try again."
 
 Progress = Callable[[float, str], None]
@@ -303,14 +293,14 @@ def ffmpeg_exe() -> str:
         exe = shutil.which("ffmpeg")
         if exe:
             return exe
-    raise ClipError("ffmpeg is missing. Run install.bat again to add it.")
+    raise ClipError(NOT_INSTALLED.split(" Until")[0].format(what="ffmpeg"))
 
 
 def _ydl(progress: Progress | None = None):
     try:
         import yt_dlp
     except ImportError:
-        raise ClipError("The YouTube downloader (yt-dlp) isn't installed. Run install.bat again to add it.") from None
+        raise ClipError(NOT_INSTALLED.split(" Until")[0].format(what="The YouTube downloader (yt-dlp)")) from None
 
     def hook(d):
         if progress and d.get("status") == "downloading":
@@ -445,10 +435,7 @@ def _load_demucs():
             try:
                 from demucs.pretrained import get_model
             except ImportError:
-                raise ClipError(
-                    "The music remover (Demucs) isn't installed. Run install.bat again, "
-                    "or untick 'Remove music and background noise'."
-                ) from None
+                raise ClipError(NOT_INSTALLED.format(what="The music remover (Demucs)")) from None
             try:
                 _demucs = get_model(DEMUCS_MODEL)
             except Exception as exc:  # noqa: BLE001
@@ -462,9 +449,10 @@ def _load_demucs():
 def remove_background(wav: np.ndarray, device: str = "cpu") -> np.ndarray:
     """Keep only the voice in a (channels, samples) clip at SEP_SR. Returns mono."""
     import torch
-    from demucs.apply import apply_model
 
     model = _load_demucs()
+    from demucs.apply import apply_model
+
     x = torch.from_numpy(np.ascontiguousarray(wav, dtype=np.float32))
     if x.shape[0] == 1:
         x = x.repeat(2, 1)
@@ -497,6 +485,10 @@ def _rms(wav: np.ndarray) -> float:
 # --------------------------------------------------------------- the clip
 
 
+TRANSCRIPTS = ("captions", "speech", "none")  # captions, else speech-to-text / only speech-to-text / none
+PAD_S = 1.0  # cut this much extra on each side, so the clip can move to whole words
+
+
 @dataclass
 class Clip:
     path: Path
@@ -504,9 +496,21 @@ class Clip:
     start: float  # where in the video the cut begins and ends
     end: float
     title: str
-    transcript: str  # "" when the video has no usable captions
-    captions: str  # "written", "automatic" or ""
+    transcript: str  # "" when there's none
+    source: str  # where the transcript came from: "written" or "automatic" captions, "speech" (to text), or ""
     language: str  # the language to clone in, from config.LANGUAGES
+    note: str = ""  # anything that didn't work but didn't stop the clip
+
+
+def _speech_units(words: list[transcribe.Word], offset: float) -> list[Unit]:
+    """Whisper's words as Units. A word's end is stretched into the pause after it (up to
+    0.3 s) so cutting there doesn't clip its last sound."""
+    units = [Unit(offset + s, offset + e, t) for s, e, t in words]
+    for a, b in itertools.pairwise(units):
+        a.end = max(a.end, min(b.start, a.end + 0.3))
+    if units:
+        units[-1].end += 0.3
+    return units
 
 
 def make_clip(
@@ -516,16 +520,20 @@ def make_clip(
     *,
     language: str = "English",
     isolate: bool = True,
+    transcript: str = "captions",
     device: str = "cpu",
+    settings: dict | None = None,
     progress: Progress | None = None,
 ) -> Clip:
-    """Download (or reuse), cut, clean up and save a reference clip. See the module docstring."""
+    """Download (or reuse), cut, clean up, transcribe and save a reference clip. See the module docstring."""
     url = _clean_url(url)
     if start is None or str(start).strip() == "":
         start_s = start_from_url(url) or 0.0
     else:
         start_s = parse_time(start)
     length = min(MAX_LEN, max(MIN_LEN, float(length or DEFAULT_LEN)))
+    if transcript not in TRANSCRIPTS:
+        transcript = "captions"
 
     video = download(url, progress)
     if video.duration and start_s >= video.duration - 1:
@@ -535,29 +543,51 @@ def make_clip(
     spoken = (spoken_language(video.info) or "").split("-")[0]
     if spoken:
         language = CODE_LANGS.get(spoken, "Auto")
-    if progress:
-        progress(0.6, "Reading the captions")
-    units, kind = captions(video, spoken or LANG_CODES.get(language))
 
-    s, e, chosen = snap(units, start_s, start_s + length)
+    # Cut a little more than asked, so the clip can then move to whole words.
+    ws = max(0.0, start_s - PAD_S)
+    we = start_s + length + PAD_S
     if video.duration:
-        e = min(e, video.duration)
+        we = min(we, video.duration)
     if progress:
-        progress(0.65, "Cutting the clip")
-    wav = cut(video.path, s, e)
+        progress(0.6, "Cutting the clip")
+    wav = cut(video.path, ws, we)
     if wav.shape[1] < SEP_SR:
         raise ClipError(f"There's no audio at {format_time(start_s)}. Is the video that long?")
-    e = s + wav.shape[1] / SEP_SR  # shorter than asked when the video ends sooner
+    we = ws + wav.shape[1] / SEP_SR  # shorter than asked when the video ends sooner
 
     mix = wav.mean(0)
     if isolate:
         if progress:
-            progress(0.7, "Removing music and background noise" + ("" if _demucs else " (the first time takes longer)"))
+            progress(0.65, "Removing music and background noise" + ("" if _demucs else " (the first time takes longer)"))
         mono = remove_background(wav, device)
     else:
         mono = mix
-    trimmed = audio.trim_silence(mono, SEP_SR)
-    if audio.is_silent(trimmed, 0.01) or len(trimmed) < 2 * SEP_SR or _rms(mono) < 0.05 * _rms(mix):
+
+    units, source, note = [], "", ""
+    if transcript == "captions":
+        if progress:
+            progress(0.8, "Reading the captions")
+        units, source = captions(video, spoken or LANG_CODES.get(language))
+    s, e, chosen = snap(units, start_s, start_s + length)
+    if not chosen and transcript != "none":
+        if progress:
+            progress(0.85, "Writing down what's said (speech-to-text)")
+        try:
+            words, heard = transcribe.words(mono, SEP_SR, {**(settings or {}), "device": device}, language=spoken or None)
+        except ValueError as exc:
+            words, heard, note = [], None, str(exc)
+        s, e, chosen = snap(_speech_units(words, ws), start_s, start_s + length)
+        source = "speech"
+        if heard and not spoken:
+            language = CODE_LANGS.get(heard.split("-")[0], "Auto")
+    if not chosen:
+        s, e, source = start_s, start_s + length, ""
+    s, e = max(s, ws), min(e, we)
+
+    a, b = round((s - ws) * SEP_SR), round((e - ws) * SEP_SR)
+    trimmed = audio.trim_silence(mono[a:b], SEP_SR)
+    if audio.is_silent(trimmed, 0.01) or len(trimmed) < 2 * SEP_SR or _rms(mono[a:b]) < 0.05 * _rms(mix[a:b]):
         raise ClipError(
             f"There's hardly any voice between {format_time(s)} and {format_time(e)}. Try another start time."
         )
@@ -576,8 +606,9 @@ def make_clip(
         end=e,
         title=video.title,
         transcript=caption_text(chosen),
-        captions=kind if chosen else "",
+        source=source if chosen else "",
         language=language,
+        note=note,
     )
 
 
@@ -610,7 +641,7 @@ def update_downloader() -> str:
 
 
 def setup(log=print) -> None:
-    """Download the Demucs model and check the other tools, for install.bat."""
+    """Download the Demucs and Whisper models and check the other tools, for install.bat."""
     log(f"ffmpeg: {ffmpeg_exe()}")
     from importlib.metadata import version
 
@@ -625,6 +656,13 @@ def setup(log=print) -> None:
         log("Without Deno, YouTube downloads may fail. Run install.bat again to add it.")
     model = _load_demucs()
     log(f"Music remover ready ({DEMUCS_MODEL}, separates: {', '.join(model.sources)})")
+    from .config import load_settings
+
+    try:
+        transcribe.download(load_settings(), log)
+    except Exception as exc:  # noqa: BLE001
+        raise ClipError(f"Couldn't download the speech-to-text model: {exc}") from None
+    log("Speech-to-text ready")
 
 
 def main() -> None:
@@ -634,6 +672,7 @@ def main() -> None:
     ap.add_argument("--length", type=float, default=DEFAULT_LEN, help=f"clip length in seconds ({MIN_LEN}-{MAX_LEN})")
     ap.add_argument("--language", default="English", help="language of the captions to use for the transcript")
     ap.add_argument("--keep-music", action="store_true", help="don't remove music and background noise")
+    ap.add_argument("--transcript", choices=TRANSCRIPTS, default="captions", help="captions (else speech-to-text), speech or none")
     ap.add_argument("--device", default=None, help="cuda:0 or cpu (default from settings.json)")
     ap.add_argument("--setup", action="store_true", help="download the music remover model and check the tools")
     ap.add_argument("--update", action="store_true", help="update yt-dlp")
@@ -655,12 +694,16 @@ def main() -> None:
                 args.length,
                 language=args.language,
                 isolate=not args.keep_music,
+                transcript=args.transcript,
                 device=args.device or load_settings().get("device", "cpu"),
+                settings=load_settings(),
                 progress=lambda f, desc: print(f"  {int(f * 100):3d}%  {desc}"),
             )
             print(f"\n{clip.title}: {clip.seconds:.1f}s from {format_time(clip.start)} to {format_time(clip.end)}")
             print(f"Saved to {clip.path} ({time.time() - t0:.0f}s)")
-            print(f"Transcript ({clip.captions or 'no captions'}, {clip.language}): {clip.transcript}")
+            print(f"Transcript ({clip.source or 'none'}, {clip.language}): {clip.transcript}")
+            if clip.note:
+                print(clip.note)
         elif not (args.setup or args.update):
             ap.print_help()
     except ClipError as exc:

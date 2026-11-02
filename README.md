@@ -2,7 +2,7 @@
 
 Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with a few simple apps:
 
-- **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip, then save it to your voice library.
+- **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip or a YouTube link, then save it to your voice library.
 - **Speak** for typing anything and hearing it in one of your saved voices, saved as a WAV or MP3. It can use the full model or the small GGUF model (through KoboldCpp, which the installer sets up).
 - **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server** (full model, most accurate voices). Both use the OpenAI text-to-speech API that SillyTavern understands.
 
@@ -53,6 +53,14 @@ The Studio opens in your browser at http://127.0.0.1:7860. The first action in e
 **Design a voice.** Write a description: age, gender, pitch, pace, mood, accent. The model reads the *sample line* in that voice. Generate 2 to 4 takes, keep your favourite, name it and save. The saved take becomes the voice's reference clip, so the voice sounds the same every time you use it.
 
 **Clone a voice.** Upload or record 5 to 15 seconds of one person speaking clearly with no music. Type exactly what they say (clones with a transcript are much better), click **Preview clone**, and save it when you like it. Only clone voices you have permission to use.
+
+**Clone from a YouTube link.** Open **Get the clip from a YouTube video** at the top of the Clone tab and paste a video link. Find a stretch where your speaker talks on their own and put its time in **Start at** (like `1:23`), or right-click the video on YouTube at that moment, choose **Copy video URL at current time** and paste that link instead. Pick a clip length (15 seconds is a good start) and click **Get clip**. The Studio then:
+
+- downloads the video's audio (once: more clips from the same video are quick),
+- cuts out that stretch and removes music and background noise with [Demucs](https://github.com/facebookresearch/demucs) (untick the box to keep the sound as it is),
+- fills in the transcript from the video's captions when it has some, moving the cut to the nearest whole words so the two match, and sets the language to the video's.
+
+The clip lands in **Reference clip**, so listen to it, check the transcript, and carry on with **Preview clone** as usual. Not the right bit? Change the start time and click **Get clip** again, or trim it with the scissors on the player. Other video sites that [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports work too.
 
 **My voices.** Try any saved voice with your own text, change its speed, and download the result (also saved in `outputs\`). You can rename voices, fix a transcript, or delete them here.
 
@@ -187,6 +195,8 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 - **Clone sounds off**: use a cleaner 5 to 15 second clip and make sure the transcript matches word for word.
 - **Speak's GGUF model doesn't start or says KoboldCpp couldn't say that**: KoboldCpp's messages are in `.cache\koboldcpp-speak.log`. If it mentions CUDA, update your NVIDIA driver. You can always switch back to the full model.
 - **A port is already in use**: change `studio_port`, `server_port`, `speak_port` or `gguf_port` in `settings.json`.
+- **"Couldn't get that video"**: YouTube changes often, and the downloader has to keep up. Click **Update the YouTube downloader** under the YouTube box (running `install.bat` again updates it too) and try again. If YouTube asks you to sign in to prove you're not a bot, wait a while and try again later.
+- **The YouTube clip is mostly music or another voice**: try a different start time, a shorter length, or a video where the speaker talks alone (interviews and podcasts work well).
 
 ## Updating
 
@@ -205,6 +215,7 @@ G:\Qwen3TTS\
   settings.json your settings
   .venv\ .python\ .tools\ .cache\   private Python, packages, KoboldCpp and caches
                                     (.python is skipped when an existing PyTorch is reused)
+                                    (.cache\youtube: the last few YouTube downloads and clips)
 ```
 
 To uninstall, delete the folder. Back up `voices\` first if you want to keep your voices.

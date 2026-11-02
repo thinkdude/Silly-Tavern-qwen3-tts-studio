@@ -15,7 +15,7 @@ import gradio as gr
 import numpy as np
 import soundfile as sf
 
-from . import audio, download_models, koboldcpp
+from . import audio, download_models, koboldcpp, youtube
 from .config import LANGUAGES, OUTPUTS_DIR, VOICES_DIR, load_settings, save_settings, setup_environment
 from .engine import OutOfMemory, SilentOutput, TTSEngine
 from .voices import VoiceLibrary
@@ -46,6 +46,15 @@ TIPS = """
 - 5 to 15 seconds of one person talking, with no music or background noise.
 - Type exactly what is said in the clip. Clones with a transcript are noticeably better.
 - The clone copies the clip's mood and recording quality, so pick a clip that sounds the way you want.
+"""
+
+YOUTUBE_HELP = """
+Paste a link to a video where the voice talks clearly, ideally on its own. Find a good stretch on YouTube and put
+its time in **Start at**, or right-click the video at that moment, choose **Copy video URL at current time**, paste
+that link and leave Start at empty. The clip lands in **Reference clip** below, with a transcript from the video's
+captions when it has some. Other video sites work too.
+
+Only clone voices you have permission to use.
 """
 
 
@@ -118,6 +127,19 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
 
         # ------------------------------------------------------------- Clone
         with gr.Tab("Clone a voice"):
+            with gr.Accordion("Get the clip from a YouTube video", open=False):
+                gr.Markdown(YOUTUBE_HELP)
+                with gr.Row():
+                    y_url = gr.Textbox(label="Video link", placeholder="https://www.youtube.com/watch?v=...", scale=3)
+                    y_start = gr.Textbox(label="Start at (minutes:seconds)", placeholder="e.g. 1:23", scale=1)
+                    y_len = gr.Slider(
+                        youtube.MIN_LEN, youtube.MAX_LEN, value=youtube.DEFAULT_LEN, step=1, label="Clip length (seconds)", scale=2
+                    )
+                with gr.Row():
+                    y_clean = gr.Checkbox(value=True, label="Remove music and background noise")
+                    y_go = gr.Button("Get clip", variant="primary")
+                y_status = gr.Markdown()
+                y_update = gr.Button("Update the YouTube downloader", size="sm")
             with gr.Row():
                 with gr.Column():
                     c_ref = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference clip")
@@ -276,6 +298,43 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
 
         c_save.click(save_clone, [c_ref, c_text, c_xvec, c_lang, c_name], [c_status, l_voice])
 
+        @friendly
+        def youtube_clip(url, start, length, clean, lang, progress=gr.Progress()):
+            clip = youtube.make_clip(
+                url,
+                start,
+                length,
+                language=lang,
+                isolate=clean,
+                device=engine.settings.get("device", "cpu"),
+                progress=lambda f, desc: progress(f, desc=desc),
+            )
+            where = f"{youtube.format_time(clip.start)} to {youtube.format_time(clip.end)}"
+            msg = [f"Got **{clip.seconds:.1f} seconds** of *{clip.title}* ({where}). Have a listen in **Reference clip** below."]
+            if clip.transcript:
+                source = "the video's captions" if clip.captions == "written" else "YouTube's automatic captions"
+                msg.append(f"The transcript comes from {source}: check it matches what you hear, especially the first and last words.")
+            else:
+                msg.append("The video has no captions for that part, so type what's said (or tick \"I don't have a transcript\").")
+            if clip.language == "Auto" and lang != "Auto":
+                msg.append("The video's language isn't one Qwen3-TTS lists, so Language is set to **Auto**.")
+            elif clip.language != lang:
+                msg.append(f"Language set to **{clip.language}** to match the video.")
+            msg.append(
+                "Not quite right? Change the start time and click **Get clip** again (quick now the video is downloaded), "
+                "or trim the clip with the scissors on the player."
+            )
+            return str(clip.path), clip.transcript, gr.update(value=False) if clip.transcript else gr.update(), clip.language, " ".join(msg)
+
+        y_go.click(youtube_clip, [y_url, y_start, y_len, y_clean, c_lang], [c_ref, c_text, c_xvec, c_lang, y_status])
+
+        @friendly
+        def update_downloader(progress=gr.Progress()):
+            progress(0.5, desc="Updating yt-dlp")
+            return youtube.update_downloader()
+
+        y_update.click(update_downloader, None, y_status)
+
         def show_voice(voice_id):
             v = library.get(voice_id) if voice_id else None
             if v is None:
@@ -420,7 +479,7 @@ def main() -> None:
         server_name="127.0.0.1",
         server_port=port,
         inbrowser=not args.no_browser,
-        allowed_paths=[str(VOICES_DIR), str(OUTPUTS_DIR)],
+        allowed_paths=[str(VOICES_DIR), str(OUTPUTS_DIR), str(youtube.WORK_DIR)],
         show_api=False,
     )
 

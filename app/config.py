@@ -84,6 +84,9 @@ def setup_environment() -> None:
     os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("GRADIO_TEMP_DIR", str(CACHE_DIR / "gradio"))
+    # Used when cloning from YouTube: Deno (run by yt-dlp) and PyTorch Hub keep caches here too.
+    os.environ.setdefault("DENO_DIR", str(CACHE_DIR / "deno"))
+    os.environ.setdefault("TORCH_HOME", str(CACHE_DIR / "torch"))
     for d in (VOICES_DIR, OUTPUTS_DIR, CACHE_DIR):
         d.mkdir(parents=True, exist_ok=True)
 

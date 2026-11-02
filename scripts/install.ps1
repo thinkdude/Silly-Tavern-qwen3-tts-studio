@@ -251,7 +251,9 @@ if (Test-Path $reuseMarker) {
 # --- 4. Python environment and packages -----------------------------------------
 function Install-Requirements([string[]]$extra) {
     Step 'Installing Qwen3-TTS and the app requirements'
-    $reqArgs = @('pip', 'install', '--python', $py, '-r', (Join-Path $Root 'requirements.txt')) + $extra
+    # yt-dlp has to keep up with YouTube, so running install.bat again always updates it.
+    $reqArgs = @('pip', 'install', '--python', $py, '-r', (Join-Path $Root 'requirements.txt'),
+        '--upgrade-package', 'yt-dlp', '--upgrade-package', 'yt-dlp-ejs') + $extra
     Run $uv $reqArgs 'Installing requirements'
 }
 
@@ -350,6 +352,21 @@ if ($SkipModels -or $SkipGguf) {
     if ($code -ne 0) {
         Warn 'That download failed, but everything else is installed. Run install.bat again to retry,'
         Warn 'or Speak downloads it the first time you pick the GGUF model.'
+    }
+}
+
+# --- 6c. Music remover and speech-to-text, for cloning from YouTube and transcribing clips ---
+if ($SkipModels) {
+    Step 'Skipping the music remover and speech-to-text models. They download the first time they are needed.'
+} else {
+    Step 'Downloading the music remover and speech-to-text models (about 1.8 GB, resumes if interrupted)'
+    $ErrorActionPreference = 'Continue'
+    & $py -m app.youtube --setup
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -ne 0) {
+        Warn 'That failed, but everything else is installed. Run install.bat again to retry,'
+        Warn 'or they download the first time they are needed.'
     }
 }
 

@@ -2,7 +2,7 @@
 
 Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with a few simple apps:
 
-- **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip, then save it to your voice library.
+- **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip or a YouTube link, then save it to your voice library.
 - **Speak** for typing anything and hearing it in one of your saved voices, saved as a WAV or MP3. It can use the full model or the small GGUF model (through KoboldCpp, which the installer sets up).
 - **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server** (full model, most accurate voices). Both use the OpenAI text-to-speech API that SillyTavern understands.
 
@@ -12,7 +12,7 @@ Everything (Python, packages, models, your voices) stays inside one folder, so i
 
 - Windows 10 or 11
 - An NVIDIA graphics card. 8 GB of VRAM or more is comfortable; 6 GB works. It runs without one, but very slowly.
-- About 22 GB of free space on the drive you install to
+- About 24 GB of free space on the drive you install to
 - An internet connection for the install (afterwards everything runs offline)
 
 ## Install
@@ -21,7 +21,7 @@ Everything (Python, packages, models, your voices) stays inside one folder, so i
 2. Extract it so the files sit in **`G:\Qwen3TTS`**. You should end up with `G:\Qwen3TTS\install.bat`, not `G:\Qwen3TTS\qwen3-tts-studio-main\install.bat`.
 3. Double-click **`install.bat`**. If Windows shows "Windows protected your PC", click **More info → Run anyway**.
 
-The installer checks your graphics card, downloads a private copy of Python, installs PyTorch with the right CUDA version, picks settings for your GPU and downloads the models (around 12 GB in total), plus KoboldCpp and the GGUF voice model for Speak (about 2.3 GB more). It takes a while the first time. If anything fails, run `install.bat` again; it picks up where it left off.
+The installer checks your graphics card, downloads a private copy of Python, installs PyTorch with the right CUDA version, picks settings for your GPU and downloads the models (around 14 GB in total, including the speech-to-text and music remover models for cloning), plus KoboldCpp and the GGUF voice model for Speak (about 2.3 GB more). It takes a while the first time. If anything fails, run `install.bat` again; it picks up where it left off.
 
 ### Already have Python with PyTorch?
 
@@ -52,9 +52,17 @@ The Studio opens in your browser at http://127.0.0.1:7860. The first action in e
 
 **Design a voice.** Write a description: age, gender, pitch, pace, mood, accent. The model reads the *sample line* in that voice. Generate 2 to 4 takes, keep your favourite, name it and save. The saved take becomes the voice's reference clip, so the voice sounds the same every time you use it.
 
-**Clone a voice.** Upload or record 5 to 15 seconds of one person speaking clearly with no music. Type exactly what they say (clones with a transcript are much better), click **Preview clone**, and save it when you like it. Only clone voices you have permission to use.
+**Clone a voice.** Upload or record 5 to 15 seconds of one person speaking clearly with no music. Click **Transcribe the clip** to have speech-to-text ([Whisper](https://huggingface.co/openai/whisper-large-v3-turbo)) write down what's said, then read it while you listen and fix any mistakes (or type it yourself). Clones with an exact transcript are much better. Click **Preview clone**, and save it when you like it. Only clone voices you have permission to use.
 
-**My voices.** Try any saved voice with your own text, change its speed, and download the result (also saved in `outputs\`). You can rename voices, fix a transcript, or delete them here.
+**Clone from a YouTube link.** Open **Get the clip from a YouTube video** at the top of the Clone tab and paste a video link. Find a stretch where your speaker talks on their own and put its time in **Start at** (like `1:23`), or right-click the video on YouTube at that moment, choose **Copy video URL at current time** and paste that link instead. Pick a clip length (15 seconds is a good start) and click **Get clip**. The Studio then:
+
+- downloads the video's audio (once: more clips from the same video are quick),
+- cuts out that stretch and removes music and background noise with [Demucs](https://github.com/facebookresearch/demucs) (untick the box to keep the sound as it is),
+- writes down what's said: from the video's captions when it has some, otherwise with speech-to-text (pick which under **Transcript from**). The cut moves to the nearest whole words so the clip and the transcript match, and the language is set to the video's.
+
+The clip lands in **Reference clip** and the transcript in the box under it. Listen to the clip, fix anything the transcript got wrong, and carry on with **Preview clone** as usual. Not the right bit? Change the start time and click **Get clip** again, or trim it with the scissors on the player and click **Transcribe the clip** so the transcript matches. Other video sites that [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports work too.
+
+**My voices.** Try any saved voice with your own text, change its speed, and download the result (also saved in `outputs\`). You can rename voices, fix a transcript (or **Transcribe** one that has none), or delete them here.
 
 ## Type and listen: `start_speak.bat`
 
@@ -150,6 +158,7 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 - **Voice design model (about 4 GB):** once your voices are designed, open the Studio's **System** tab and click **Remove voice design model**. Saved voices, cloning and the voice server don't need it. It downloads again by itself the next time you design a voice.
 - **Smaller voice model:** the 0.6B clone model saves about 2 GB, with slightly less accurate voices. See `clone_model` in Settings below.
 - **Reuse an existing PyTorch** if you have one (see above). That skips the roughly 3 GB PyTorch download.
+- **Speech-to-text model (about 1.6 GB):** if you always type transcripts yourself, delete `models\whisper-large-v3-turbo`. It downloads again by itself the next time you click **Transcribe** or a YouTube clip needs it.
 - **GGUF model and KoboldCpp (about 2.3 GB):** if you never use GGUF in Speak, delete `models\gguf` and `.tools\koboldcpp`, and install with `install.bat -SkipGguf` from then on.
 
 ## Settings
@@ -174,6 +183,7 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `gguf_model`, `gguf_tokenizer` | `qwen3-tts-0.6b-q8_0.gguf`, `qwen3-tts-tokenizer-f16.gguf` | GGUF files from [koboldcpp/tts](https://huggingface.co/koboldcpp/tts), kept in `models\gguf`, or full paths to your own copies |
 | `koboldcpp_exe` | empty | Path to your own `koboldcpp.exe`; empty uses the one the installer downloaded |
 | `gguf_port` | 5002 | Port of the KoboldCpp that Speak starts (yours stays on 5001) |
+| `stt_model` | `openai/whisper-large-v3-turbo` | Speech-to-text model for transcripts (a Hugging Face Whisper model, kept in `models\`, or a folder) |
 
 To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base"` and run `install.bat` once to download it.
 
@@ -187,6 +197,9 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 - **Clone sounds off**: use a cleaner 5 to 15 second clip and make sure the transcript matches word for word.
 - **Speak's GGUF model doesn't start or says KoboldCpp couldn't say that**: KoboldCpp's messages are in `.cache\koboldcpp-speak.log`. If it mentions CUDA, update your NVIDIA driver. You can always switch back to the full model.
 - **A port is already in use**: change `studio_port`, `server_port`, `speak_port` or `gguf_port` in `settings.json`.
+- **"Couldn't get that video"**: YouTube changes often, and the downloader has to keep up. Click **Update the YouTube downloader** under the YouTube box (running `install.bat` again updates it too) and try again. If YouTube asks you to sign in to prove you're not a bot, wait a while and try again later.
+- **The transcript has mistakes**: speech-to-text and automatic captions mishear names and mumbled words, so always read the transcript while listening to the clip and fix it before you save the voice.
+- **The YouTube clip is mostly music or another voice**: try a different start time, a shorter length, or a video where the speaker talks alone (interviews and podcasts work well).
 
 ## Updating
 
@@ -205,6 +218,7 @@ G:\Qwen3TTS\
   settings.json your settings
   .venv\ .python\ .tools\ .cache\   private Python, packages, KoboldCpp and caches
                                     (.python is skipped when an existing PyTorch is reused)
+                                    (.cache\youtube: the last few YouTube downloads and clips)
 ```
 
 To uninstall, delete the folder. Back up `voices\` first if you want to keep your voices.

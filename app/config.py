@@ -36,6 +36,20 @@ LANGUAGES = [
     "Spanish",
     "Italian",
 ]
+# The language codes used by captions and speech-to-text.
+LANG_CODES = {
+    "English": "en",
+    "Chinese": "zh",
+    "Japanese": "ja",
+    "Korean": "ko",
+    "German": "de",
+    "French": "fr",
+    "Russian": "ru",
+    "Portuguese": "pt",
+    "Spanish": "es",
+    "Italian": "it",
+}
+CODE_LANGS = {code: name for name, code in LANG_CODES.items()}
 
 DEFAULTS: dict[str, Any] = {
     # Filled in by `python -m app.configure` during install.
@@ -72,6 +86,8 @@ DEFAULTS: dict[str, Any] = {
     "koboldcpp_export": True,
     "koboldcpp_voices_dir": "koboldcpp_voices",
     "koboldcpp_url": "http://127.0.0.1:5001",
+    # Speech-to-text for filling in a clip's transcript (Hugging Face id, or a folder).
+    "stt_model": "openai/whisper-large-v3-turbo",
     "gpu_name": "",
     "vram_gb": 0.0,
 }
@@ -84,6 +100,9 @@ def setup_environment() -> None:
     os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     os.environ.setdefault("GRADIO_TEMP_DIR", str(CACHE_DIR / "gradio"))
+    # Used when cloning from YouTube: Deno (run by yt-dlp) and PyTorch Hub keep caches here too.
+    os.environ.setdefault("DENO_DIR", str(CACHE_DIR / "deno"))
+    os.environ.setdefault("TORCH_HOME", str(CACHE_DIR / "torch"))
     for d in (VOICES_DIR, OUTPUTS_DIR, CACHE_DIR):
         d.mkdir(parents=True, exist_ok=True)
 

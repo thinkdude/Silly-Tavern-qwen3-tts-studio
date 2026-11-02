@@ -198,6 +198,8 @@ def fake_video(source, tmp_path, monkeypatch):
     calls.video = video
     calls.heard = []  # speech-to-text calls; it finds no words unless a test says otherwise
     monkeypatch.setattr(transcribe, "words", lambda wav, sr, settings, language=None: calls.heard.append(language) or ([], None))
+    calls.detected = None  # the language speech-to-text hears; None: it can't tell, so YouTube's label counts
+    monkeypatch.setattr(transcribe, "detect", lambda wav, sr, settings: calls.detected)
     return calls
 
 
@@ -252,6 +254,41 @@ def test_make_clip_uses_speech_to_text_without_captions(fake_video, monkeypatch)
     assert clip.transcript == "hello from speech to" and clip.source == "speech"
     assert (clip.start, clip.end) == (pytest.approx(10.1), pytest.approx(15.4))  # whole words
     assert clip.language == "German"  # what Whisper heard
+
+
+ARABIC = {"events": [{"tStartMs": 9000, "dDurationMs": 6000, "segs": [{"utf8": "مرحبا بكم في البرنامج"}]}]}
+WORDS = [(1.2, 1.6, " hello"), (1.7, 2.2, " from"), (2.4, 3.0, " speech")]
+
+
+@needs_ffmpeg
+def test_make_clip_follows_the_language_it_hears_not_youtubes_label(fake_video, monkeypatch):
+    video = fake_video.video
+    video.info = {"automatic_captions": {"ar-orig": _tracks("ar")}}  # YouTube says Arabic...
+    video.captions = {"ar": (youtube.parse_json3(ARABIC), "automatic")}
+    fake_video.detected = "en"  # ...but it's English
+    asked = []
+    monkeypatch.setattr(transcribe, "words", lambda wav, sr, settings, language=None: asked.append(language) or (WORDS, "en"))
+    clip = youtube.make_clip("https://youtu.be/abc123", "0:10", 5, language="English", isolate=False)
+    assert clip.transcript == "hello from speech" and clip.source == "speech"
+    assert clip.language == "English" and asked == ["en"]
+
+
+@needs_ffmpeg
+def test_make_clip_skips_captions_in_the_wrong_script(fake_video, monkeypatch):
+    video = fake_video.video
+    video.captions = {"en": (youtube.parse_json3(ARABIC), "automatic")}  # labelled English, written in Arabic
+    monkeypatch.setattr(transcribe, "words", lambda wav, sr, settings, language=None: (WORDS, "en"))
+    clip = youtube.make_clip("https://youtu.be/abc123", "0:10", 5, isolate=False)
+    assert clip.transcript == "hello from speech" and clip.source == "speech"
+
+
+def test_script_fits():
+    assert youtube.script_fits("Hello, ça va? Schön!", "en")
+    assert not youtube.script_fits("مرحبا بكم في البرنامج", "en")
+    assert youtube.script_fits("Привет, как дела?", "ru") and not youtube.script_fits("Hello there", "ru")
+    assert youtube.script_fits("今日はいい天気です", "ja") and youtube.script_fits("안녕하세요", "ko")
+    assert youtube.script_fits("مرحبا", "ar")  # languages it doesn't know always fit
+    assert not youtube.script_fits("", "en")
 
 
 @needs_ffmpeg

@@ -59,8 +59,8 @@ def test_server_url():
 def test_speaks_locally_without_server(engine, voice, no_server):
     speaker = speak.Speaker(engine, no_server)
     assert not speaker.server_running()
-    wav, sr, via_server = speaker.say(voice, "Hello!")
-    assert not via_server and sr == SR and len(wav) > 0
+    wav, sr, source = speaker.say(voice, "Hello!")
+    assert source == "full" and sr == SR and len(wav) > 0
     assert engine.loaded() == ["clone"]
 
 
@@ -69,8 +69,8 @@ def test_uses_running_server(engine, voice, server):
     speaker = speak.Speaker(engine, settings)
     engine.preload("clone")
     assert speaker.server_running()
-    wav, sr, via_server = speaker.say(voice, "Hello!", language="French", speed=1.0)
-    assert via_server and sr == SR and len(wav) > 0
+    wav, sr, source = speaker.say(voice, "Hello!", language="French", speed=1.0)
+    assert source == "server" and sr == SR and len(wav) > 0
     # Our own copy of the model is freed while the server does the speaking.
     assert engine.loaded() == []
     clone_calls = [c for c in server_engine._models["clone"].calls if c[0] == "clone"]
@@ -80,10 +80,10 @@ def test_uses_running_server(engine, voice, server):
 def test_falls_back_when_server_closes(engine, voice, server):
     _, settings, stop = server
     speaker = speak.Speaker(engine, settings)
-    assert speaker.say(voice, "One.")[2]
+    assert speaker.say(voice, "One.")[2] == "server"
     stop()
-    wav, sr, via_server = speaker.say(voice, "Two.")
-    assert not via_server and len(wav) > 0 and engine.loaded() == ["clone"]
+    wav, sr, source = speaker.say(voice, "Two.")
+    assert source == "full" and len(wav) > 0 and engine.loaded() == ["clone"]
 
 
 def test_server_errors_are_readable(engine, voice, server):
@@ -112,3 +112,39 @@ def test_save_output(tmp_path, monkeypatch):
 
 def test_build(engine, library, voice, no_server):
     assert isinstance(speak.build(speak.Speaker(engine, no_server), library), gr.Blocks)
+
+
+class FakeKobold:
+    def __init__(self):
+        self.said, self.stopped = [], 0
+
+    def speak(self, text, voice, language=None, speed=1.0):
+        self.said.append((text, voice.id, language, speed))
+        return tone(1), SR
+
+    def stop(self):
+        self.stopped += 1
+
+
+def test_switch_to_gguf_and_back(engine, voice, no_server, tmp_path, monkeypatch):
+    monkeypatch.setattr(speak, "load_settings", lambda: dict(no_server))
+    saved = {}
+    monkeypatch.setattr(speak, "save_settings", saved.update)
+    kobold = FakeKobold()
+    speaker = speak.Speaker(engine, dict(no_server), kobold)
+    speaker.say(voice, "Full first.")
+    assert engine.loaded() == ["clone"]
+
+    speaker.set_choice("gguf")
+    assert saved["speak_engine"] == "gguf" and engine.loaded() == []  # the full model's memory is freed
+    wav, sr, source = speaker.say(voice, "Now GGUF.", language="German", speed=1.5)
+    assert source == "gguf" and kobold.said == [("Now GGUF.", "grumpy-wizard", "German", 1.5)]
+    assert engine.loaded() == []
+
+    speaker.set_choice("full")
+    assert saved["speak_engine"] == "full" and kobold.stopped == 1
+    assert speaker.say(voice, "Full again.")[2] == "full"
+
+
+def test_gguf_needs_kobold(engine, no_server):
+    assert speak.Speaker(engine, {**no_server, "speak_engine": "gguf"}).choice == "full"

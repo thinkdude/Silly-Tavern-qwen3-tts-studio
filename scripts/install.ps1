@@ -357,4 +357,5 @@ Write-Host ''
 Write-Host 'All done!' -ForegroundColor Green
 Write-Host '  start_studio.bat   design and clone voices'
 Write-Host '  start_server.bat   voice server for SillyTavern and other apps'
+Write-Host '  start_speak.bat    type something and hear it in one of your voices'
 Write-Host ''

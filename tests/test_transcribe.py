@@ -93,6 +93,8 @@ def test_long_clips_and_plain_text(tiny_whisper):
     assert lang == "en" and all(e <= 35.0 + 1e-6 for _, e, _ in words)
     text, lang = transcribe.text(wav[: 5 * sr], sr, tiny_whisper, language="ja")
     assert isinstance(text, str) and lang == "ja"
+    lang = transcribe.detect(wav[: 5 * sr], sr, tiny_whisper)
+    assert lang and lang.replace("-", "").isalpha()
 
 
 def test_a_missing_model_reads_well(tmp_path):

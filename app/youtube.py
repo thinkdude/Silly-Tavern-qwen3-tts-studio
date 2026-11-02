@@ -214,6 +214,30 @@ def snap(units: list[Unit], start: float, end: float) -> tuple[float, float, lis
     return max(0.0, chosen[0].start - 0.1), chosen[-1].end, chosen
 
 
+_LATIN = {"en", "de", "fr", "es", "it", "pt"}
+
+
+def script_fits(text: str, code: str | None) -> bool:
+    """False when the text is mostly in another writing system than language `code` uses,
+    like Arabic captions on an English video. Unknown languages always fit."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters or not code:
+        return bool(letters)
+
+    def share(test) -> float:
+        return sum(1 for c in letters if test(c)) / len(letters)
+
+    if code in _LATIN:
+        return share(lambda c: c < "\u0250") > 0.7  # Latin, with its accented letters
+    if code == "ru":
+        return share(lambda c: "\u0400" <= c <= "\u04ff") > 0.7
+    if code in ("zh", "ja"):
+        return share(_is_cjk) > 0.5
+    if code == "ko":
+        return share(lambda c: "\uac00" <= c <= "\ud7af" or "\u1100" <= c <= "\u11ff" or "\u3130" <= c <= "\u318f") > 0.5
+    return True
+
+
 def spoken_language(info: dict) -> str | None:
     """The language code of what's said in the video, when YouTube knows it."""
     for key in info.get("automatic_captions") or {}:
@@ -539,11 +563,7 @@ def make_clip(
     if video.duration and start_s >= video.duration - 1:
         raise ClipError(f"The video is only {format_time(video.duration)} long. Pick an earlier start time.")
 
-    # The transcript has to be in the language that's spoken, so follow the video when it says.
-    spoken = (spoken_language(video.info) or "").split("-")[0]
-    if spoken:
-        language = CODE_LANGS.get(spoken, "Auto")
-
+    stt_settings = {**(settings or {}), "device": device}
     # Cut a little more than asked, so the clip can then move to whole words.
     ws = max(0.0, start_s - PAD_S)
     we = start_s + length + PAD_S
@@ -564,17 +584,33 @@ def make_clip(
     else:
         mono = mix
 
+    # The transcript has to be in the language that's spoken. Listen for it first: YouTube's own
+    # labels can be wrong (or be for a dubbed track), so they only count when listening isn't possible.
     units, source, note = [], "", ""
+    spoken = None
+    if transcript != "none":
+        if progress:
+            progress(0.75, "Listening for the language")
+        try:
+            spoken = transcribe.detect(mono, SEP_SR, stt_settings)
+        except ValueError as exc:
+            note = str(exc)
+    spoken = (spoken or spoken_language(video.info) or "").split("-")[0] or None
+    if spoken:
+        language = CODE_LANGS.get(spoken, "Auto")
+
     if transcript == "captions":
         if progress:
             progress(0.8, "Reading the captions")
         units, source = captions(video, spoken or LANG_CODES.get(language))
     s, e, chosen = snap(units, start_s, start_s + length)
-    if not chosen and transcript != "none":
+    if chosen and not script_fits(caption_text(chosen), spoken or LANG_CODES.get(language)):
+        chosen = []  # captions in another language than the one spoken
+    if not chosen and transcript != "none" and not note:
         if progress:
             progress(0.85, "Writing down what's said (speech-to-text)")
         try:
-            words, heard = transcribe.words(mono, SEP_SR, {**(settings or {}), "device": device}, language=spoken or None)
+            words, heard = transcribe.words(mono, SEP_SR, stt_settings, language=spoken)
         except ValueError as exc:
             words, heard, note = [], None, str(exc)
         s, e, chosen = snap(_speech_units(words, ws), start_s, start_s + length)

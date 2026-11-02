@@ -183,6 +183,12 @@ def words(wav: np.ndarray, sr: int, settings: dict, language: str | None = None)
     return _run(settings, settings.get("device", "cpu"), job)
 
 
+def detect(wav: np.ndarray, sr: int, settings: dict) -> str | None:
+    """The language code Whisper hears in the clip (its first 30 seconds), like 'en'."""
+    wav16 = _to_16k(wav, sr)
+    return _run(settings, settings.get("device", "cpu"), lambda model, processor, device: _detect(model, processor, wav16, device))
+
+
 def text(wav: np.ndarray, sr: int, settings: dict, language: str | None = None) -> tuple[str, str | None]:
     """Transcribe a whole clip. Returns (text, language code)."""
     wav16 = _to_16k(wav, sr)

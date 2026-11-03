@@ -57,6 +57,17 @@ captions, or from speech-to-text when it has none, for you to check and correct.
 Only clone voices you have permission to use.
 """
 
+FILE_HELP = """
+Use a film, an episode, an interview or a podcast you already have. Click **Browse** to pick the file, or paste its
+path (in File Explorer, right-click the file and choose **Copy as path**; on Windows 10, hold Shift while you
+right-click). Play it in your usual player to find a stretch where the voice talks clearly, ideally on its own, and put
+that time in **Start at**. The clip lands in **Reference clip** below with a speech-to-text transcript for you to check
+and correct. The file stays where it is: nothing is copied or changed.
+
+Only clone voices you have permission to use.
+"""
+NO_TRACKS = {"choices": [], "value": None, "visible": False}
+
 
 def friendly(fn):
     """Show errors as a popup in the GUI instead of a stack trace."""
@@ -149,6 +160,26 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                     y_go = gr.Button("Get clip", variant="primary")
                 y_status = gr.Markdown()
                 y_update = gr.Button("Update the YouTube downloader", size="sm")
+            with gr.Accordion("Get the clip from a video or audio file on this PC", open=False):
+                gr.Markdown(FILE_HELP)
+                with gr.Row(equal_height=True):
+                    f_path = gr.Textbox(label="Video or audio file", placeholder=r"e.g. G:\Videos\interview.mp4", scale=5)
+                    f_browse = gr.Button("Browse…", scale=1, min_width=120)
+                f_info = gr.Markdown()
+                f_track_for = gr.State("")  # the file the audio track list below belongs to
+                with gr.Row():
+                    f_track = gr.Dropdown(label="Audio track (the language you want)", scale=2, **NO_TRACKS)
+                    f_start = gr.Textbox(label="Start at (minutes:seconds)", placeholder="e.g. 1:23", scale=1)
+                    f_len = gr.Slider(
+                        youtube.MIN_LEN, youtube.MAX_LEN, value=youtube.DEFAULT_LEN, step=1, label="Clip length (seconds)", scale=2
+                    )
+                with gr.Row():
+                    f_clean = gr.Checkbox(value=True, label="Remove music and background noise")
+                    f_transcript = gr.Dropdown(
+                        [("Speech-to-text", "speech"), ("None, I'll type it", "none")], value="speech", label="Transcript from"
+                    )
+                    f_go = gr.Button("Get clip", variant="primary")
+                f_status = gr.Markdown()
             with gr.Row():
                 with gr.Column():
                     c_ref = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference clip")
@@ -321,19 +352,8 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                 return " Its language isn't one Qwen3-TTS lists, so Language is set to **Auto**."
             return f" Language set to **{language}** to match."
 
-        @friendly
-        def youtube_clip(url, start, length, clean, how, lang, progress=gr.Progress()):
-            clip = youtube.make_clip(
-                url,
-                start,
-                length,
-                language=lang,
-                isolate=clean,
-                transcript=how,
-                device=engine.settings.get("device", "cpu"),
-                settings=engine.settings,
-                progress=lambda f, desc: progress(f, desc=desc),
-            )
+        def clip_outputs(clip, how, lang, again):
+            """What the Clone tab shows for a clip from a video: the clip, its transcript and language, and a note."""
             where = f"{youtube.format_time(clip.start)} to {youtube.format_time(clip.end)}"
             msg = f"Got **{clip.seconds:.1f} seconds** of *{clip.title}* ({where}). Have a listen in **Reference clip** below."
             if clip.transcript:
@@ -354,10 +374,25 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
                 msg += f" ({clip.note})"
             msg += check_note(clip.language, lang)
             msg += (
-                " Not quite right? Change the start time and click **Get clip** again (quick now the video is downloaded), "
+                f" Not quite right? Change the start time and click **Get clip** again{again}, "
                 "or trim the clip with the scissors on the player and click **Transcribe the clip**."
             )
             return str(clip.path), clip.transcript, gr.update(value=False) if clip.transcript else gr.update(), clip.language, msg
+
+        @friendly
+        def youtube_clip(url, start, length, clean, how, lang, progress=gr.Progress()):
+            clip = youtube.make_clip(
+                url,
+                start,
+                length,
+                language=lang,
+                isolate=clean,
+                transcript=how,
+                device=engine.settings.get("device", "cpu"),
+                settings=engine.settings,
+                progress=lambda f, desc: progress(f, desc=desc),
+            )
+            return clip_outputs(clip, how, lang, " (quick now the video is downloaded)")
 
         y_go.click(
             youtube_clip, [y_url, y_start, y_len, y_clean, y_transcript, c_lang], [c_ref, c_text, c_xvec, c_lang, y_status]
@@ -389,6 +424,71 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
             return youtube.update_downloader()
 
         y_update.click(update_downloader, None, y_status)
+
+        def file_info(path, loaded=""):
+            """Say how long the file is, and list its audio tracks when it has more than one."""
+            if not (path or "").strip():
+                return "", gr.update(**NO_TRACKS), ""
+            if path.strip() == (loaded or "").strip():
+                return gr.update(), gr.update(), gr.update()  # shown already; keep the track that's picked
+            try:
+                video = youtube.open_file(path)
+            except (ValueError, OSError) as exc:
+                return str(exc), gr.update(**NO_TRACKS), ""
+            msg = f"**{video.title}**: " + (f"{youtube.format_time(video.duration)} long" if video.duration else "length unknown")
+            if len(video.tracks) > 1:
+                msg += f", with {len(video.tracks)} audio tracks. Pick the one in the language you want the voice to speak."
+            tracks = gr.update(
+                choices=[(t.label, t.index) for t in video.tracks],
+                value=youtube.default_track(video),
+                visible=len(video.tracks) > 1,
+            )
+            return msg, tracks, path
+
+        f_path.submit(file_info, [f_path, f_track_for], [f_info, f_track, f_track_for], show_progress="hidden")
+        f_path.blur(file_info, [f_path, f_track_for], [f_info, f_track, f_track_for], show_progress="hidden")
+
+        @friendly
+        def browse_file(current, loaded):
+            try:
+                picked = youtube.browse(current)
+            except ValueError as exc:  # no file picker: say so where the file's details go, and keep the path box usable
+                return gr.update(), str(exc), gr.update(), gr.update()
+            if not picked:
+                return gr.update(), gr.update(), gr.update(), gr.update()
+            return picked, *file_info(picked, loaded)
+
+        # Waiting on the file picker shouldn't hold up anything else, so it skips the one-at-a-time queue.
+        f_browse.click(
+            browse_file,
+            [f_path, f_track_for],
+            [f_path, f_info, f_track, f_track_for],
+            concurrency_limit=None,
+            show_progress_on=[f_info],
+        )
+
+        @friendly
+        def file_clip(path, track, track_for, start, length, clean, how, lang, progress=gr.Progress()):
+            clip = youtube.make_file_clip(
+                path,
+                start,
+                length,
+                # A track list left over from another file doesn't count: the file's default track is used.
+                track=track if track_for and (path or "").strip() == track_for.strip() else None,
+                language=lang,
+                isolate=clean,
+                transcript=how,
+                device=engine.settings.get("device", "cpu"),
+                settings=engine.settings,
+                progress=lambda f, desc: progress(f, desc=desc),
+            )
+            return clip_outputs(clip, how, lang, "")
+
+        f_go.click(
+            file_clip,
+            [f_path, f_track, f_track_for, f_start, f_len, f_clean, f_transcript, c_lang],
+            [c_ref, c_text, c_xvec, c_lang, f_status],
+        )
 
         def show_voice(voice_id):
             v = library.get(voice_id) if voice_id else None

@@ -2,10 +2,11 @@
 
 Start it with start_speak.bat (or `python -m app.speak`). It speaks with either
 voice model:
-  * full: Qwen3-TTS itself. When the voice server is already running it does the
-    speaking, so the model isn't loaded onto the GPU twice. Otherwise this app
-    loads its own copy.
-  * gguf: the small GGUF model, run by KoboldCpp (see gguf.py).
+  * full: Qwen3-TTS itself. When the voice server is already running with the
+    full model it does the speaking, so the model isn't loaded onto the GPU
+    twice. Otherwise this app loads its own copy.
+  * gguf: the small GGUF model, run by KoboldCpp (see gguf.py). When the voice
+    server uses GGUF too, both share one KoboldCpp.
 """
 
 from __future__ import annotations
@@ -38,10 +39,7 @@ EARLIER_LINES = 10
 SERVER_CHECK_S = 10
 NO_VOICE = "Pick a voice first. No voices yet? Make one in the Voice Studio (start_studio.bat), then click Refresh voices."
 PREF_DEFAULTS = {"voice": None, "language": VOICE_DEFAULT_LANG, "speed": 1.0, "format": "wav"}
-ENGINES = [
-    ("Full model (best quality)", "full"),
-    ("GGUF with KoboldCpp (smaller, lighter on the GPU)", "gguf"),
-]
+ENGINES = gguf.MODEL_CHOICES
 
 # Talking to the voice server on this PC must never go through a system proxy.
 _local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -107,12 +105,15 @@ class Speaker:
             self.kobold.stop()
 
     def server_running(self) -> bool:
+        """Is the voice server running with the full model, so it can speak for us?"""
         if time.time() - self._checked < SERVER_CHECK_S:
             return self._running
         try:
             with _local.open(f"{self.server}/health", timeout=1) as r:
                 data = json.load(r)
             running = isinstance(data, dict) and data.get("status") == "ok" and "voices" in data
+            # Set to GGUF, the server would answer in the other model's voice.
+            running = running and data.get("engine", "full") == "full"
         except (OSError, ValueError):
             running = False
         self._running, self._checked = running, time.time()
@@ -278,7 +279,7 @@ def build(speaker: Speaker, library: VoiceLibrary) -> gr.Blocks:
         def switch_model(choice, progress=gr.Progress(track_tqdm=True)):
             speaker.set_choice(choice)
             if choice != "gguf":
-                return "Using the full model. It loads with the next line (or the voice server speaks, if it's running)."
+                return "Using the full model. It loads with the next line (or the voice server speaks, if it's running with the full model)."
             if gguf.missing(speaker.settings):
                 gguf.install(speaker.settings)  # about 2.3 GB, once
             threading.Thread(target=speaker.kobold.warm_up, daemon=True).start()

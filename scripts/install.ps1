@@ -7,7 +7,7 @@
 # Run it through install.bat. Options:
 #   -Yes               don't ask any questions (reuses an existing PyTorch if one is found)
 #   -SkipModels        don't download model weights (do it later with install.bat)
-#   -SkipGguf          don't download KoboldCpp and the GGUF model (Speak gets them when you pick GGUF)
+#   -SkipGguf          don't download KoboldCpp and the GGUF model (Speak and the voice server get them when you pick GGUF)
 #   -AllModels         also download the other clone model size
 #   -Reset             replace settings.json with fresh recommendations for this PC
 #   -Cpu               install without GPU support (very slow, for testing only)
@@ -340,9 +340,9 @@ if ($SkipModels) {
     Run $py $dlArgs 'Downloading models'
 }
 
-# --- 6b. KoboldCpp and the GGUF model, for Speak's GGUF option ------------------------
+# --- 6b. KoboldCpp and the GGUF model, for the GGUF option in Speak and the voice server ---
 if ($SkipModels -or $SkipGguf) {
-    Step 'Skipping KoboldCpp and the GGUF model. Speak downloads them the first time you pick GGUF.'
+    Step 'Skipping KoboldCpp and the GGUF model. They download the first time you pick GGUF.'
 } else {
     Step 'Downloading KoboldCpp and the GGUF voice model (about 2.3 GB, resumes if interrupted)'
     $ErrorActionPreference = 'Continue'
@@ -351,7 +351,7 @@ if ($SkipModels -or $SkipGguf) {
     $ErrorActionPreference = 'Stop'
     if ($code -ne 0) {
         Warn 'That download failed, but everything else is installed. Run install.bat again to retry,'
-        Warn 'or Speak downloads it the first time you pick the GGUF model.'
+        Warn 'or it downloads the first time you pick the GGUF model in Speak or the voice server.'
     }
 }
 

@@ -233,3 +233,48 @@ def test_download_resumes(tmp_path, monkeypatch):
         assert resumed.read_bytes() == RangeHandler.data and not (resumed.parent / "koboldcpp.exe.part").exists()
     finally:
         srv.shutdown()
+
+
+def test_shares_one_koboldcpp(kobold, setup, library, voice):
+    """Speak and the voice server use the same KoboldCpp instead of loading two."""
+    settings, log = setup
+    assert kobold.state() == "stopped" and kobold.url is None
+    kobold.warm_up()
+    assert kobold.state() == "ready" and kobold.url == kobold.own_url
+    other = gguf.KoboldTTS(settings, library)  # e.g. the voice server, after Speak started KoboldCpp
+    try:
+        other.warm_up()
+        assert other.proc is None and other.state() == "ready"
+        other.speak("Hello from the server.", voice)
+        assert other.proc is None
+        assert len([e for e in entries(log) if "started" in e]) == 1
+        kobold.warm_up()  # already running: not restarted
+        assert len([e for e in entries(log) if "started" in e]) == 1
+    finally:
+        other.stop()
+    assert kobold.running()  # stopping only ends a KoboldCpp you started yourself
+
+
+def test_voice_server_speaks_with_gguf(setup, library, voice, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import server
+    from tests.conftest import FakeEngine
+
+    settings, log = setup
+    monkeypatch.setattr(server, "load_settings", lambda: dict(settings))
+    monkeypatch.setattr(server, "save_settings", lambda s: None)
+    engine = FakeEngine()
+    k = gguf.KoboldTTS(settings, library)
+    try:
+        client = TestClient(server.create_app(engine, library, {**settings, "server_engine": "gguf"}, k))
+        assert client.get("/health").json()["gguf"] == "stopped"
+        body = {"model": "qwen3-tts", "input": "Hi there.", "voice": "grumpy-wizard", "response_format": "mp3"}
+        r = client.post("/v1/audio/speech", json=body)
+        assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg"
+        assert engine.loads == []  # the full model never loaded
+        assert [e["request"]["voice"] for e in entries(log) if "request" in e] == ["grumpy-wizard.wav"]
+        health = client.get("/health").json()
+        assert health["engine"] == "gguf" and health["gguf"] == "ready"
+    finally:
+        k.stop()

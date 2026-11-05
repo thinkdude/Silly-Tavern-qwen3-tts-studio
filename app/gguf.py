@@ -1,17 +1,21 @@
 """The GGUF voice engine: Qwen3-TTS as small GGUF files, run by KoboldCpp.
 
-Speak can use this instead of the full model. It needs less GPU memory and
-disk space, but KoboldCpp clones from the sound of the reference clip only (it
-can't use the transcript), so voices are a little less exact.
+Speak and the voice server can use this instead of the full model. It needs
+less GPU memory and disk space, but KoboldCpp clones from the sound of the
+reference clip only (it can't use the transcript), so voices are a little less
+exact.
 
 What it needs, all inside the install folder (install.bat downloads them, and
-Speak does too the first time GGUF is picked if they're missing):
+Speak or the voice server does too the first time GGUF is picked if they're
+missing):
     .tools\\koboldcpp\\koboldcpp.exe                 the KoboldCpp program
     models\\gguf\\qwen3-tts-0.6b-q8_0.gguf           the voice model
     models\\gguf\\qwen3-tts-tokenizer-f16.gguf       its audio tokenizer
 
-Speak starts KoboldCpp by itself, in the background and with no text model,
-and stops it again when you switch back to the full model or close Speak.
+The app starts KoboldCpp by itself, in the background and with no text model,
+and stops it again when you switch back to the full model or close the app.
+Speak and the voice server share one KoboldCpp on gguf_port: whichever needs it
+first starts it, and the other uses that one instead of loading a second copy.
 
     python -m app.gguf      download whatever is missing
 """
@@ -43,11 +47,16 @@ GGUF_REPO = "koboldcpp/tts"
 GGUF_DIR = MODELS_DIR / "gguf"
 KOBOLDCPP_DIR = ROOT / ".tools" / "koboldcpp"
 EXE_URL = "https://github.com/LostRuins/koboldcpp/releases/latest/download/{name}"
-LOG_PATH = CACHE_DIR / "koboldcpp-speak.log"
+LOG_PATH = CACHE_DIR / "koboldcpp-gguf.log"
 # KoboldCpp's one-file .exe unpacks itself (about 1 GB) into TEMP every time it starts.
 # This keeps that in the install folder instead of on C:.
 TEMP_DIR = CACHE_DIR / "koboldcpp-tmp"
 START_TIMEOUT_S = 600
+# The voice model switch in Speak and in the voice server's control panel.
+MODEL_CHOICES = [
+    ("Full model (best quality)", "full"),
+    ("GGUF with KoboldCpp (smaller, lighter on the GPU)", "gguf"),
+]
 
 # Talking to KoboldCpp on this PC must never go through a system proxy.
 _local = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -137,7 +146,7 @@ def launch_args(settings: dict, port: int) -> list[str]:
         "--port", str(port),
         "--skiplauncher",
         "--quiet",
-        # Replaces a copy left running on this port, e.g. after Speak was killed.
+        # Replaces a copy left running on this port, e.g. after Speak or the voice server was killed.
         "--singleinstance",
     ]  # fmt: skip
     if _uses_cuda(settings):
@@ -146,8 +155,8 @@ def launch_args(settings: dict, port: int) -> list[str]:
 
 
 def _tie_to_this_process(proc: subprocess.Popen):
-    """Windows: put KoboldCpp in a job that ends when Speak does, so closing
-    Speak's window never leaves it running in the background."""
+    """Windows: put KoboldCpp in a job that ends when this app does, so closing
+    its window never leaves KoboldCpp running in the background."""
     if os.name != "nt":
         return None
     try:
@@ -192,7 +201,8 @@ def _tie_to_this_process(proc: subprocess.Popen):
 
 class KoboldTTS:
     """Speaks saved voices with KoboldCpp: one that's already running with the voice
-    loaded (such as yours for SillyTavern), or a copy it starts itself."""
+    loaded (such as yours for SillyTavern, or the one Speak or the voice server
+    started), or a copy it starts itself."""
 
     def __init__(self, settings: dict, library: VoiceLibrary):
         self.settings = settings
@@ -202,6 +212,7 @@ class KoboldTTS:
         self._job = None
         self._url: str | None = None
         self._voices: set[str] = set()
+        self._ready = False
         self._lock = threading.RLock()
         atexit.register(self.stop)
 
@@ -225,6 +236,17 @@ class KoboldTTS:
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
+    def state(self) -> str:
+        """"ready", "starting" or "stopped". Never waits, so a status page can ask any time."""
+        if self.running():
+            return "ready" if self._ready else "starting"
+        return "ready" if self._url else "stopped"
+
+    @property
+    def url(self) -> str | None:
+        """The KoboldCpp this speaks with, once one is known."""
+        return self._url or (self.own_url if self.running() else None)
+
     def _find(self, name: str) -> str:
         urls = [self.own_url, (self.settings.get("koboldcpp_url") or koboldcpp.DEFAULT_URL).rstrip("/")]
         for url in dict.fromkeys(urls):
@@ -244,6 +266,7 @@ class KoboldTTS:
         """Start (or restart) KoboldCpp with every saved voice. Blocks until it's ready."""
         with self._lock:
             self.stop()
+            self._ready = False
             if missing(self.settings):
                 install(self.settings)
             koboldcpp.sync(self.library, self.settings)
@@ -276,17 +299,30 @@ class KoboldTTS:
                     self.stop()
                     raise ValueError(f"KoboldCpp took too long to start. Its log is in {LOG_PATH}.")
                 time.sleep(1)
+            self._ready = True
             print(f"[gguf] KoboldCpp ready in {time.time() - started:.0f}s", flush=True)
+
+    def ensure_running(self) -> None:
+        """Make sure a KoboldCpp with the GGUF model is up on gguf_port: ours, or one
+        Speak or the voice server already started there. Starts one if not."""
+        with self._lock:
+            if self.running() and self._ready:
+                return
+            voices = self._tts_voices(self.own_url)
+            if voices is not None:
+                self._url, self._voices = self.own_url, voices
+                return
+            self.start()
 
     def warm_up(self) -> None:
         try:
-            self.start()
+            self.ensure_running()
         except Exception as exc:
             print(f"[gguf] Could not start KoboldCpp yet: {exc}")
 
     def stop(self) -> None:
         with self._lock:
-            proc, self.proc, self._url = self.proc, None, None
+            proc, self.proc, self._url, self._ready = self.proc, None, None, False
             if proc is not None and proc.poll() is None:
                 print("[gguf] Stopping KoboldCpp", flush=True)
                 if os.name == "nt":  # its one-file .exe runs as two processes, so end the whole tree

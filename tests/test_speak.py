@@ -29,12 +29,11 @@ def no_server():
     return {**DEFAULTS, "server_port": free_port()}
 
 
-@pytest.fixture
-def server(library, voice):
-    """A real voice server (with a stand-in engine) on a free port."""
-    settings = {**DEFAULTS, "server_port": free_port(), "api_key": "secret"}
+def run_server(library, settings, kobold=None):
+    """Start a real voice server (with a stand-in engine) on settings' port. Returns (engine, stop)."""
     eng = FakeEngine()
-    srv = uvicorn.Server(uvicorn.Config(create_app(eng, library, settings), host="127.0.0.1", port=settings["server_port"], log_level="warning"))
+    app = create_app(eng, library, settings, kobold)
+    srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=settings["server_port"], log_level="warning"))
     t = threading.Thread(target=srv.run, daemon=True)
     t.start()
     for _ in range(100):
@@ -46,6 +45,14 @@ def server(library, voice):
         srv.should_exit = True
         t.join(5)
 
+    return eng, stop
+
+
+@pytest.fixture
+def server(library, voice):
+    """A real voice server (with a stand-in engine) on a free port."""
+    settings = {**DEFAULTS, "server_port": free_port(), "api_key": "secret"}
+    eng, stop = run_server(library, settings)
     yield eng, settings, stop
     stop()
 
@@ -148,3 +155,17 @@ def test_switch_to_gguf_and_back(engine, voice, no_server, tmp_path, monkeypatch
 
 def test_gguf_needs_kobold(engine, no_server):
     assert speak.Speaker(engine, {**no_server, "speak_engine": "gguf"}).choice == "full"
+
+
+def test_ignores_a_server_set_to_gguf(engine, voice, library):
+    """Speak's full model must not come back in the GGUF model's voice."""
+    settings = {**DEFAULTS, "server_port": free_port(), "server_engine": "gguf"}
+    server_kobold = FakeKobold()
+    _, stop = run_server(library, settings, server_kobold)
+    try:
+        speaker = speak.Speaker(engine, settings)
+        assert not speaker.server_running()
+        assert speaker.say(voice, "Hello!")[2] == "full"
+        assert engine.loaded() == ["clone"] and server_kobold.said == []
+    finally:
+        stop()

@@ -2,7 +2,7 @@
 
 Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with a few simple apps:
 
-- **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip or a YouTube link, then save it to your voice library.
+- **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip, a YouTube link or a video on your PC, then save it to your voice library.
 - **Speak** for typing anything and hearing it in one of your saved voices, saved as a WAV or MP3. It can use the full model or the small GGUF model (through KoboldCpp, which the installer sets up).
 - **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server** (full model, most accurate voices). Both use the OpenAI text-to-speech API that SillyTavern understands.
 
@@ -61,6 +61,8 @@ The Studio opens in your browser at http://127.0.0.1:7860. The first action in e
 - writes down what's said: from the video's captions when it has some, otherwise with speech-to-text (pick which under **Transcript from**). The cut moves to the nearest whole words so the clip and the transcript match, and the language is set to the video's.
 
 The clip lands in **Reference clip** and the transcript in the box under it. Listen to the clip, fix anything the transcript got wrong, and carry on with **Preview clone** as usual. Not the right bit? Change the start time and click **Get clip** again, or trim it with the scissors on the player and click **Transcribe the clip** so the transcript matches. Other video sites that [yt-dlp](https://github.com/yt-dlp/yt-dlp) supports work too.
+
+**Clone from a video or audio file on your PC.** Open **Get the clip from a video or audio file on this PC** in the Clone tab and click **Browse** to pick a film, episode, interview, podcast or any other video or audio file (MP4, MKV, AVI, MOV, MP3, WAV and the like). You can also paste its path: in File Explorer, right-click the file and choose **Copy as path** (on Windows 10, hold Shift while you right-click). Find a stretch where the voice talks clearly in your usual video player, put its time in **Start at** and click **Get clip**. It works like a YouTube clip: the stretch is cut out, music and background noise are removed if the box is ticked, and speech-to-text writes down what's said. Films often carry several audio tracks (the original and dubs); when a file has more than one, pick the language you want under **Audio track**. The file is read where it is and never copied or changed.
 
 **My voices.** Try any saved voice with your own text, change its speed, and download the result (also saved in `outputs\`). You can rename voices, fix a transcript (or **Transcribe** one that has none), or delete them here.
 
@@ -199,7 +201,9 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 - **A port is already in use**: change `studio_port`, `server_port`, `speak_port` or `gguf_port` in `settings.json`.
 - **"Couldn't get that video"**: YouTube changes often, and the downloader has to keep up. Click **Update the YouTube downloader** under the YouTube box (running `install.bat` again updates it too) and try again. If YouTube asks you to sign in to prove you're not a bot, wait a while and try again later.
 - **The transcript has mistakes**: speech-to-text and automatic captions mishear names and mumbled words, so always read the transcript while listening to the clip and fix it before you save the voice.
-- **The YouTube clip is mostly music or another voice**: try a different start time, a shorter length, or a video where the speaker talks alone (interviews and podcasts work well).
+- **The YouTube clip is mostly music or another voice**: try a different start time, a shorter length, or a video where the speaker talks alone (interviews and podcasts work well). The same goes for clips from your own videos.
+- **Clicking Browse doesn't seem to do anything**: the file window may have opened behind your browser, so check the taskbar. You can always paste the file's path into the box instead.
+- **A clip from a film is in the wrong language**: the film has more than one audio track. Pick the right one under **Audio track** and click **Get clip** again.
 
 ## Updating
 
@@ -218,7 +222,7 @@ G:\Qwen3TTS\
   settings.json your settings
   .venv\ .python\ .tools\ .cache\   private Python, packages, KoboldCpp and caches
                                     (.python is skipped when an existing PyTorch is reused)
-                                    (.cache\youtube: the last few YouTube downloads and clips)
+                                    (.cache\youtube: the last few YouTube downloads, and clips cut from videos)
 ```
 
 To uninstall, delete the folder. Back up `voices\` first if you want to keep your voices.

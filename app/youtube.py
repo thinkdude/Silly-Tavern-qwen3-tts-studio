@@ -1,8 +1,10 @@
-"""Get a reference clip for cloning from a YouTube video (or any site yt-dlp knows).
+"""Get a reference clip for cloning from a YouTube video (or any site yt-dlp knows),
+or from a video or audio file on this PC.
 
-Paste a link and say where the speaker talks, and this:
+Paste a link (or pick a file) and say where the speaker talks, and this:
   1. downloads the video's audio with yt-dlp, once: more clips from the same
-     video reuse it,
+     video reuse it. A file on this PC is read where it is, from the audio
+     track you pick when it has several (films often do),
   2. cuts out that stretch with ffmpeg,
   3. removes music and background noise with Demucs (optional),
   4. writes down what's said, so the clone gets a transcript: from the video's
@@ -17,11 +19,14 @@ Whisper models. Everything stays inside the install folder.
     python -m app.youtube --setup            download the Demucs and Whisper models now
     python -m app.youtube --update           update yt-dlp, for when YouTube downloads stop working
     python -m app.youtube URL --start 1:23   make a clip from the command line
+    python -m app.youtube "G:\\Videos\\film.mkv" --start 1:23 --track 2
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import html
 import importlib
 import itertools
@@ -288,6 +293,8 @@ class Video:
     path: Path
     info: dict
     captions: dict = field(default_factory=dict)  # language code -> (units, kind)
+    local: bool = False  # a file on this PC rather than a download
+    tracks: list[Track] = field(default_factory=list)  # a local file's audio tracks
 
 
 _videos: OrderedDict[str, Video] = OrderedDict()
@@ -431,14 +438,193 @@ def _prune(folder: Path, keep: int) -> None:
             pass
 
 
+# ------------------------------------------------------------ files on this PC
+
+WINDOWS = os.name == "nt"
+MEDIA_PATTERNS = (
+    "*.mp4;*.mkv;*.mov;*.avi;*.webm;*.wmv;*.flv;*.m4v;*.mpg;*.mpeg;*.ts;*.mts;*.m2ts;*.vob;*.3gp;"
+    "*.mp3;*.wav;*.m4a;*.aac;*.flac;*.ogg;*.opus;*.wma;*.mka"
+)
+# Films tag their audio tracks with three-letter language codes.
+LANG3 = {"eng": "en", "jpn": "ja", "chi": "zh", "zho": "zh", "kor": "ko", "ger": "de", "deu": "de",
+         "fre": "fr", "fra": "fr", "rus": "ru", "por": "pt", "spa": "es", "ita": "it"}  # fmt: skip
+NO_LANGUAGE = {"", "und", "unk", "mis", "mul", "zxx"}
+
+
+@dataclass
+class Track:
+    """One audio track of a file on this PC."""
+
+    index: int  # among the file's audio tracks, 0 first (ffmpeg's -map 0:a:N)
+    language: str  # a code like "en", or "" when the file doesn't say
+    label: str  # what the Studio shows, like "Track 2: English dub, 5.1"
+    default: bool  # the one players pick
+
+
+_files: OrderedDict[tuple, Video] = OrderedDict()
+_STREAM = re.compile(r"^\s*Stream #\d+:\d+(?:\[[^\]]*\])?(?:\(([^)]*)\))?: (\w+): (.*)$")
+
+
+def _language(tag: str | None) -> str:
+    tag = (tag or "").strip().lower().split("-")[0]
+    return "" if tag in NO_LANGUAGE else LANG3.get(tag, tag)
+
+
+def probe(path: Path) -> tuple[float | None, list[Track]]:
+    """How long a video or audio file is and which audio tracks it has, from what ffmpeg says about it."""
+    r = subprocess.run([ffmpeg_exe(), "-nostdin", "-hide_banner", "-i", str(path)], capture_output=True, check=False)
+    text = r.stderr.decode("utf-8", "replace")
+    if "Input #0" not in text:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        why = re.sub(r"^.*?:\s*", "", lines[-1]) if lines else "unknown error"
+        raise ClipError(f"Couldn't read {path.name} as video or audio ({why}). Pick a video or audio file.")
+    m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", text)
+    duration = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3]) if m else None
+
+    found: list[dict] = []
+    current = None
+    for line in text.splitlines():
+        if m := _STREAM.match(line):
+            lang, kind, desc = m.groups()
+            current = {"language": _language(lang), "desc": desc, "title": ""} if kind == "Audio" else None
+            if current:
+                found.append(current)
+        elif re.match(r"\s*(Chapter|Program) #", line):
+            current = None
+        elif current and (m := re.match(r"\s+title\s*:\s*(.*)$", line)):
+            current["title"] = m[1].strip()
+
+    tracks = []
+    for i, t in enumerate(found):
+        lang = CODE_LANGS.get(t["language"], t["language"])
+        name = t["title"]
+        if name and lang and lang.lower() not in name.lower():
+            name += f" ({lang})"
+        name = name or lang
+        layout = re.search(r"Hz, ([^,(]+)", t["desc"])
+        label = f"Track {i + 1}" + (f": {name}" if name else "") + (f", {layout[1].strip()}" if layout else "")
+        tracks.append(Track(i, t["language"], label, "(default)" in t["desc"]))
+    return duration, tracks
+
+
+def clean_path(text) -> Path:
+    """A path as typed or pasted. Windows' 'Copy as path' puts quotes around it."""
+    s = str(text or "").strip().strip("\"'").strip()
+    if not s:
+        raise ClipError("Pick a file first: click Browse, or paste the file's path.")
+    return Path(os.path.expandvars(os.path.expanduser(s)))
+
+
+def open_file(path) -> Video:
+    """Look at a video or audio file on this PC. Nothing is copied: clips are cut from it where it is."""
+    p = clean_path(path)
+    if p.is_dir():
+        raise ClipError(f"{p} is a folder. Pick a video or audio file in it.")
+    if not p.is_file():
+        raise ClipError(f"Couldn't find {p}. Check the path, or click Browse to pick the file.")
+    st = p.stat()
+    key = (str(p.resolve()), st.st_size, st.st_mtime_ns)
+    if v := _files.get(key):
+        _files.move_to_end(key)
+        return v
+    duration, tracks = probe(p)
+    if not tracks:
+        raise ClipError(f"{p.name} has no sound in it.")
+    tag = hashlib.sha1(key[0].encode("utf-8")).hexdigest()[:6]
+    v = Video(id=f"{p.stem[:30]}-{tag}", title=p.name, duration=duration, path=p, info={}, local=True, tracks=tracks)
+    _files[key] = v
+    while len(_files) > 20:
+        _files.popitem(last=False)
+    return v
+
+
+def default_track(video: Video) -> int:
+    return next((t.index for t in video.tracks if t.default), 0)
+
+
+# Both pickers print "PICKED:" and the path; Windows' in base64, so no console code page can garble it.
+# The hidden TopMost owner window brings the dialog up in front of the browser.
+_PICKER_PS = r"""
+Add-Type -AssemblyName System.Windows.Forms
+$owner = New-Object System.Windows.Forms.Form -Property @{TopMost = $true; ShowInTaskbar = $false}
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = 'Pick a video or audio file'
+$dialog.Filter = $env:QWEN_TTS_FILTER
+if ($env:QWEN_TTS_FOLDER) { $dialog.InitialDirectory = $env:QWEN_TTS_FOLDER }
+if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {
+    'PICKED:' + [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($dialog.FileName))
+}
+$owner.Dispose()
+"""
+
+_PICKER_TK = """
+import sys, tkinter, tkinter.filedialog
+root = tkinter.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+types = [("Video and audio files", sys.argv[2].replace(";", " ")), ("All files", "*")]
+path = tkinter.filedialog.askopenfilename(title="Pick a video or audio file", initialdir=sys.argv[1] or None, filetypes=types)
+if path:
+    print("PICKED:" + path)
+"""
+
+
+def browse(current: str = "") -> str | None:
+    """Open the file picker and return the chosen file's path, or None when it's cancelled.
+
+    The Studio runs on this PC, so the window opens on this PC's screen, in the
+    folder of `current` when that's a path.
+    """
+    folder = ""
+    try:
+        p = clean_path(current)
+        if p.is_absolute():
+            folder = str(p if p.is_dir() else p.parent if p.parent.is_dir() else "")
+    except (ClipError, OSError, ValueError):
+        pass
+    if WINDOWS:
+        script = base64.b64encode(_PICKER_PS.encode("utf-16-le")).decode("ascii")
+        cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-EncodedCommand", script]
+        env = {**os.environ, "QWEN_TTS_FOLDER": folder, "QWEN_TTS_FILTER": f"Video and audio files|{MEDIA_PATTERNS}|All files|*.*"}
+        extra = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    else:
+        cmd = [sys.executable, "-I", "-X", "utf8", "-c", _PICKER_TK, folder, MEDIA_PATTERNS]
+        env, extra = None, {}
+    try:
+        r = subprocess.run(cmd, capture_output=True, env=env, timeout=900, check=False, **extra)
+    except subprocess.TimeoutExpired:
+        return None
+    except OSError as exc:
+        r = subprocess.CompletedProcess(cmd, 1, b"", str(exc).encode())
+    lines = r.stdout.decode("utf-8", "replace").splitlines()
+    picked = [ln.strip().removeprefix("PICKED:") for ln in lines if ln.strip().startswith("PICKED:")]
+    try:
+        if picked and WINDOWS:
+            picked = [base64.b64decode(picked[-1], validate=True).decode("utf-8")]
+    except ValueError:  # garbled: treat it like any other failure
+        picked, r.returncode = [], r.returncode or 1
+    if r.returncode != 0:
+        err = r.stderr.decode("utf-8", "replace").strip().splitlines()
+        print(f"[files] The file picker failed: {err[-1] if err else r.returncode}")
+        raise ClipError(
+            "Couldn't open the file picker here. Paste the file's path into the box instead: in File Explorer, "
+            "right-click the file and choose 'Copy as path' (on Windows 10, hold Shift while you right-click)."
+        )
+    return picked[-1] if picked else None
+
+
 # --------------------------------------------------------------- audio work
 
 
-def cut(src: Path, start: float, end: float, sr: int = SEP_SR) -> np.ndarray:
-    """Decode [start, end] seconds of any audio or video file as (2, samples) float32."""
+def cut(src: Path, start: float, end: float, sr: int = SEP_SR, track: int | None = None) -> np.ndarray:
+    """Decode [start, end] seconds of any audio or video file as (2, samples) float32.
+
+    `track` picks one of the file's audio tracks (0 is the first); None lets ffmpeg choose.
+    """
     cmd = [
         ffmpeg_exe(), "-nostdin", "-hide_banner", "-loglevel", "error",
         "-ss", f"{max(0.0, start):.3f}", "-t", f"{max(0.0, end - start):.3f}", "-i", str(src),
+        *(["-map", f"0:a:{track}"] if track is not None else []),
         "-vn", "-ac", "2", "-ar", str(sr), "-f", "f32le", "pipe:1",
     ]  # fmt: skip
     r = subprocess.run(cmd, capture_output=True, check=False)
@@ -555,13 +741,61 @@ def make_clip(
         start_s = start_from_url(url) or 0.0
     else:
         start_s = parse_time(start)
+    video = download(url, progress)
+    return _make_clip(
+        video, start_s, length, language=language, isolate=isolate, transcript=transcript,
+        device=device, settings=settings, progress=progress, hint=spoken_language(video.info),
+    )  # fmt: skip
+
+
+def make_file_clip(
+    path,
+    start: str | float | None = None,
+    length: float = DEFAULT_LEN,
+    *,
+    track: int | None = None,
+    language: str = "English",
+    isolate: bool = True,
+    transcript: str = "speech",
+    device: str = "cpu",
+    settings: dict | None = None,
+    progress: Progress | None = None,
+) -> Clip:
+    """make_clip for a video or audio file on this PC. `track` picks its audio track (0 is the
+    first); None takes the one the file marks as default. Files have no captions to read, so
+    the transcript comes from speech-to-text (or "none")."""
+    if progress:
+        progress(0.05, "Opening the file")
+    video = open_file(path)
+    if track is None or not any(t.index == track for t in video.tracks):
+        track = default_track(video)
+    return _make_clip(
+        video, parse_time(start), length, language=language, isolate=isolate,
+        transcript="none" if transcript == "none" else "speech", device=device, settings=settings,
+        progress=progress, hint=video.tracks[track].language or None, track=track,
+    )  # fmt: skip
+
+
+def _make_clip(
+    video: Video,
+    start_s: float,
+    length: float,
+    *,
+    language: str,
+    isolate: bool,
+    transcript: str,
+    device: str,
+    settings: dict | None,
+    progress: Progress | None,
+    hint: str | None = None,  # the spoken language as the video or file labels it, used when listening can't tell
+    track: int | None = None,
+) -> Clip:
     length = min(MAX_LEN, max(MIN_LEN, float(length or DEFAULT_LEN)))
     if transcript not in TRANSCRIPTS:
         transcript = "captions"
-
-    video = download(url, progress)
     if video.duration and start_s >= video.duration - 1:
-        raise ClipError(f"The video is only {format_time(video.duration)} long. Pick an earlier start time.")
+        what = video.title if video.local else "The video"
+        raise ClipError(f"{what} is only {format_time(video.duration)} long. Pick an earlier start time.")
 
     stt_settings = {**(settings or {}), "device": device}
     # Cut a little more than asked, so the clip can then move to whole words.
@@ -571,9 +805,10 @@ def make_clip(
         we = min(we, video.duration)
     if progress:
         progress(0.6, "Cutting the clip")
-    wav = cut(video.path, ws, we)
+    wav = cut(video.path, ws, we, track=track)
     if wav.shape[1] < SEP_SR:
-        raise ClipError(f"There's no audio at {format_time(start_s)}. Is the video that long?")
+        noun = "file" if video.local else "video"
+        raise ClipError(f"There's no audio at {format_time(start_s)}. Is the {noun} that long?")
     we = ws + wav.shape[1] / SEP_SR  # shorter than asked when the video ends sooner
 
     mix = wav.mean(0)
@@ -595,7 +830,7 @@ def make_clip(
             spoken = transcribe.detect(mono, SEP_SR, stt_settings)
         except ValueError as exc:
             note = str(exc)
-    spoken = (spoken or spoken_language(video.info) or "").split("-")[0] or None
+    spoken = (spoken or hint or "").split("-")[0] or None
     if spoken:
         language = CODE_LANGS.get(spoken, "Auto")
 
@@ -629,7 +864,7 @@ def make_clip(
         )
 
     CLIPS_DIR.mkdir(parents=True, exist_ok=True)
-    safe_id = re.sub(r"[^\w-]", "_", video.id)[:40]
+    safe_id = re.sub(r"[^\w-]", "_", video.id)[:40] + (f"-t{track + 1}" if track else "")
     out = CLIPS_DIR / f"{safe_id}-{int(s * 1000)}-{int(e * 1000)}{'-voice' if isolate else ''}.wav"
     sf.write(str(out), audio.normalize_peak(trimmed), SEP_SR, subtype="PCM_16")
     _prune(CLIPS_DIR, KEEP_CLIPS)
@@ -702,13 +937,14 @@ def setup(log=print) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Make a voice clip from a YouTube video")
-    ap.add_argument("url", nargs="?", help="video link")
+    ap = argparse.ArgumentParser(description="Make a voice clip from a YouTube video or a file on this PC")
+    ap.add_argument("url", nargs="?", help="video link, or a video or audio file on this PC")
     ap.add_argument("--start", default=None, help="where the clip starts, e.g. 1:23 (default: the link's t=, else 0)")
     ap.add_argument("--length", type=float, default=DEFAULT_LEN, help=f"clip length in seconds ({MIN_LEN}-{MAX_LEN})")
     ap.add_argument("--language", default="English", help="language of the captions to use for the transcript")
     ap.add_argument("--keep-music", action="store_true", help="don't remove music and background noise")
     ap.add_argument("--transcript", choices=TRANSCRIPTS, default="captions", help="captions (else speech-to-text), speech or none")
+    ap.add_argument("--track", type=int, default=None, help="for a file with several audio tracks: which one (1 is the first)")
     ap.add_argument("--device", default=None, help="cuda:0 or cpu (default from settings.json)")
     ap.add_argument("--setup", action="store_true", help="download the music remover model and check the tools")
     ap.add_argument("--update", action="store_true", help="update yt-dlp")
@@ -724,10 +960,7 @@ def main() -> None:
             from .config import load_settings
 
             t0 = time.time()
-            clip = make_clip(
-                args.url,
-                args.start,
-                args.length,
+            options = dict(
                 language=args.language,
                 isolate=not args.keep_music,
                 transcript=args.transcript,
@@ -735,6 +968,13 @@ def main() -> None:
                 settings=load_settings(),
                 progress=lambda f, desc: print(f"  {int(f * 100):3d}%  {desc}"),
             )
+            if clean_path(args.url).is_file():
+                video = open_file(args.url)
+                print("Audio tracks: " + "; ".join(t.label + (" (default)" if t.default else "") for t in video.tracks))
+                track = args.track - 1 if args.track else None
+                clip = make_file_clip(args.url, args.start, args.length, track=track, **options)
+            else:
+                clip = make_clip(args.url, args.start, args.length, **options)
             print(f"\n{clip.title}: {clip.seconds:.1f}s from {format_time(clip.start)} to {format_time(clip.end)}")
             print(f"Saved to {clip.path} ({time.time() - t0:.0f}s)")
             print(f"Transcript ({clip.source or 'none'}, {clip.language}): {clip.transcript}")

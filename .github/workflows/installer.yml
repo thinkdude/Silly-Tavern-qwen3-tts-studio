@@ -44,6 +44,7 @@ jobs:
           Write-Host $out
           Write-Host "Exit code: $code"
           if ($code -ne 1 -or $out -notmatch 'Extract All') { exit 1 }
+          exit 0  # the expected exit code 1 would otherwise fail this step
 
       - name: Install into another folder
         run: |

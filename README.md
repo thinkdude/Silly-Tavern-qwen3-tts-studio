@@ -57,6 +57,15 @@ When a new version is out, the menu says so. Download the new ZIP, extract it, d
 
 Already using a copy from before the menu existed (or a `git clone`)? Extract the new ZIP over it, or `git pull`, then run `install.bat`.
 
+### Already have some of it?
+
+The installer checks what's already there before it downloads anything:
+
+- **Running it again** skips everything that's already installed (Python, PyTorch, the packages and the models), so it's quick. It only looks online for updates, and if there's no internet it keeps what you have.
+- **Models from other AI apps.** If another app on this PC already downloaded one of the models (Qwen3-TTS, Whisper or the GGUF files) through Hugging Face, the installer finds it in the shared Hugging Face cache (usually `C:\Users\<you>\.cache\huggingface`) and links it into the install folder instead of downloading it again. On the same drive the link takes no extra space; on another drive it's copied.
+- **Another Qwen3-TTS Studio folder.** Installing a second copy, or into a new folder, reuses the models and KoboldCpp from your earlier install (found through its shortcut). To point it at a folder yourself, run `install.bat -ModelsFrom "G:\old\Qwen3TTS"`.
+- **Python with PyTorch**, see below.
+
 ### Already have Python with PyTorch?
 
 If another AI tool already installed a GPU-enabled PyTorch (2.6 or newer, Python 3.10 to 3.13), the installer finds it and asks whether to reuse it. Saying yes skips the roughly 3 GB PyTorch download.
@@ -73,6 +82,7 @@ Most people never need these. Run them from a command prompt in the install fold
 | --- | --- |
 | `-InstallDir <path>` | Installs into that folder without asking (the app is copied there first) |
 | `-NoShortcut` | Doesn't add the desktop and Start menu shortcut |
+| `-ModelsFrom <path>` | Reuses the models (and KoboldCpp) in another Qwen3-TTS Studio folder instead of downloading them |
 | `-Reset` | Picks settings for your GPU again |
 | `-AllModels` | Also downloads the other clone model size |
 | `-SkipModels` | Skips the model download |

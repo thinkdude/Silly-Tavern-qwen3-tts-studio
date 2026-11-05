@@ -11,3 +11,4 @@ The first public release.
 - **Speak:** type something and hear it in one of your voices, saved as WAV or MP3, with the full or the GGUF model.
 - **KoboldCpp:** your voices are copied to a folder KoboldCpp's text-to-speech can use, and the installer downloads KoboldCpp and the GGUF model.
 - **Installer:** picks the right PyTorch for your NVIDIA card, can reuse a GPU PyTorch you already have, keeps everything in one folder, and picks up where it left off if it's interrupted.
+- **Nothing is downloaded twice.** The installer checks what's already there and skips it, so running it again is quick and works offline. Models other AI apps already downloaded (in the shared Hugging Face cache) and models from another Qwen3-TTS Studio folder are linked or copied in instead of downloaded (`-ModelsFrom` points it at a folder).

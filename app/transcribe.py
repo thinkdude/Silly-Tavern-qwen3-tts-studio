@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import audio
+from . import audio, reuse
 from .config import local_model_dir, resolve_model
 
 STT_MODEL = "openai/whisper-large-v3-turbo"
@@ -36,8 +36,7 @@ def model_id(settings: dict) -> str:
 
 
 def is_downloaded(settings: dict) -> bool:
-    d = local_model_dir(model_id(settings))
-    return (d / "config.json").exists() and any(d.glob("*.safetensors"))
+    return reuse.model_complete(local_model_dir(model_id(settings)))
 
 
 def download(settings: dict, log=print) -> None:
@@ -45,9 +44,11 @@ def download(settings: dict, log=print) -> None:
     repo = model_id(settings)
     if Path(repo).is_dir() or is_downloaded(settings):
         return  # a folder of your own, or downloaded already
+    target = local_model_dir(repo)
+    if reuse.reuse_model(repo, target, log) and is_downloaded(settings):
+        return  # it was already on this PC
     from huggingface_hub import snapshot_download
 
-    target = local_model_dir(repo)
     log(f"Downloading the speech-to-text model ({repo}, about 1.6 GB) to {target} ...")
     snapshot_download(repo_id=repo, local_dir=str(target), allow_patterns=["*.json", "*.safetensors", "*.txt"])
 

@@ -70,8 +70,15 @@ jobs:
           & "$t\.venv\Scripts\python.exe" -c "from app import menu; m = menu.Menu(); m.refresh(); print(m.render())"
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Install again (an update)
+      - name: Install again (an update), which skips what's already installed
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes -Cpu -SkipModels -InstallDir $env:TARGET
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # cmd does the redirecting, so the installer's progress on stderr isn't treated as an error here.
+          cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes -Cpu -SkipModels -InstallDir %TARGET% > again.log 2>&1"
+          $code = $LASTEXITCODE
+          $log = Get-Content again.log -Raw
+          Write-Host $log
+          if ($code -ne 0) { exit $code }
           if (-not (Test-Path "$env:TARGET\settings.json")) { throw 'settings.json is gone' }
+          foreach ($expected in 'PyTorch 2.8.0+cpu is already installed', 'already installed; only updates are fetched') {
+            if ($log -notmatch [regex]::Escape($expected)) { throw "The second run didn't say: $expected" }
+          }

@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-HOMEPAGE = "https://github.com/thinkdude/qwen3-tts-studio"
+REPO = "thinkdude/Silly-Tavern-qwen3-tts-studio"
+HOMEPAGE = "https://github.com/" + REPO
 RELEASES_URL = HOMEPAGE + "/releases/latest"
 
 try:

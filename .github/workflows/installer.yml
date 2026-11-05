@@ -64,6 +64,7 @@ jobs:
             $target = $ws.CreateShortcut((Join-Path $dir 'Qwen3-TTS Studio.lnk')).TargetPath
             if ($target -ne "$t\Qwen3-TTS.bat") { throw "Shortcut in $dir points at '$target'" }
           }
+          Set-Location $t  # so Python imports the installed copy of the app, not this checkout
           & "$t\.venv\Scripts\python.exe" -c "import torch, gradio, qwen_tts; print('imports ok, torch', torch.__version__)"
           if ($LASTEXITCODE -ne 0) { exit 1 }
           & "$t\.venv\Scripts\python.exe" -c "from app import menu; m = menu.Menu(); m.refresh(); print(m.render())"

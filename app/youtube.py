@@ -19,7 +19,7 @@ Whisper models. Everything stays inside the install folder.
     python -m app.youtube --setup            download the Demucs and Whisper models now
     python -m app.youtube --update           update yt-dlp, for when YouTube downloads stop working
     python -m app.youtube URL --start 1:23   make a clip from the command line
-    python -m app.youtube "G:\\Videos\\film.mkv" --start 1:23 --track 2
+    python -m app.youtube "D:\\Videos\\film.mkv" --start 1:23 --track 2
 """
 
 from __future__ import annotations

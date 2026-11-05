@@ -1,27 +1,61 @@
 # Qwen3-TTS Studio
 
-Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with a few simple apps:
+Make your own voices with [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) and use them anywhere, all on your own Windows PC. Three programs, started from one menu:
 
 - **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip, a YouTube link or a video on your PC, then save it to your voice library.
-- **Speak** for typing anything and hearing it in one of your saved voices, saved as a WAV or MP3. It can use the full model or the small GGUF model (through KoboldCpp, which the installer sets up).
-- **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server**, which speaks with the full model (most accurate voices) or the GGUF one, your pick, and plays the same line from both so you can compare. Both use the OpenAI text-to-speech API that SillyTavern understands.
+- **Voice Server** so SillyTavern and other apps can speak in your voices. It uses the OpenAI text-to-speech API that SillyTavern understands, with either the full model (most accurate voices) or the small GGUF one, and it can play the same line from both so you can compare. You can also play voices through **KoboldCpp**.
+- **Speak** for typing anything and hearing it in one of your saved voices, saved as a WAV or MP3.
 
-Everything (Python, packages, models, your voices) stays inside one folder, so it can live on your G: drive without touching C:.
+Everything (the programs, a private Python, the models and your voices) stays inside one folder on whichever drive you choose. After the install, it all runs offline.
 
-## What you need
+## Get started
+
+### What you need
 
 - Windows 10 or 11
 - An NVIDIA graphics card. 8 GB of VRAM or more is comfortable; 6 GB works. It runs without one, but very slowly.
 - About 24 GB of free space on the drive you install to
-- An internet connection for the install (afterwards everything runs offline)
+- An internet connection for the install
 
-## Install
+### Install
 
-1. On this repo's GitHub page click **Code → Download ZIP** (or `git clone` it).
-2. Extract it so the files sit in **`G:\Qwen3TTS`**. You should end up with `G:\Qwen3TTS\install.bat`, not `G:\Qwen3TTS\qwen3-tts-studio-main\install.bat`.
-3. Double-click **`install.bat`**. If Windows shows "Windows protected your PC", click **More info → Run anyway**.
+1. Download **`Qwen3-TTS-Studio-<version>.zip`** from the [latest release](https://github.com/thinkdude/qwen3-tts-studio/releases/latest) (under **Assets**).
+2. Right-click the ZIP and choose **Extract All...**.
+3. Open the extracted folder and double-click **`Qwen3-TTS.bat`**. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**.
+4. It asks where to install. Press **Enter** to take the folder it suggests, or type another one, such as `D:\Qwen3TTS`. It shows how much space each drive has free.
+5. Let it run. It checks your graphics card, downloads a private copy of Python, installs PyTorch with the right CUDA version, picks settings for your GPU and downloads the models (around 14 GB, including the speech-to-text and music remover models for cloning), plus KoboldCpp and the GGUF voice model (about 2.3 GB more). The first time takes a while. If anything fails, open `Qwen3-TTS.bat` again: it picks up where it left off.
+6. At the end it offers a **Qwen3-TTS Studio** shortcut on your desktop and in the Start menu, then opens the menu.
 
-The installer checks your graphics card, downloads a private copy of Python, installs PyTorch with the right CUDA version, picks settings for your GPU and downloads the models (around 14 GB in total, including the speech-to-text and music remover models for cloning), plus KoboldCpp and the GGUF voice model for Speak and the Voice Server (about 2.3 GB more). It takes a while the first time. If anything fails, run `install.bat` again; it picks up where it left off.
+If you installed into a different folder, the one you extracted is no longer needed and you can delete it.
+
+### The menu
+
+Open the **Qwen3-TTS Studio** shortcut (or `Qwen3-TTS.bat` in the install folder) and press a number:
+
+```
+  Qwen3-TTS Studio 1.0.0
+  D:\Qwen3TTS
+
+    1  Voice Studio   make voices: describe one, or clone one from a clip
+                      running at http://127.0.0.1:7860
+    2  Voice Server   lets SillyTavern and other apps speak in your voices
+    3  Speak          type something and hear it in one of your voices
+
+    4  Open the folder with the audio you made
+    5  Open the guide
+    6  Install, update or repair
+    Q  Quit
+```
+
+Each program opens in its own window and in your browser. Keep its window open while you use it, and close the window to stop it. The menu shows which programs are running: picking one that's already running just opens its page again. Closing the menu leaves the programs running.
+
+You can still start the programs directly with `start_studio.bat`, `start_server.bat` and `start_speak.bat` in the install folder.
+
+### Updating
+
+When a new version is out, the menu says so. Download the new ZIP, extract it, double-click `Qwen3-TTS.bat` in it, and press **Enter** when it offers to update your existing install. Your voices, settings and downloaded models are kept. (It finds your install through its shortcut; if you didn't add one, type your install folder.)
+
+Already using a copy from before the menu existed (or a `git clone`)? Extract the new ZIP over it, or `git pull`, then run `install.bat`.
 
 ### Already have Python with PyTorch?
 
@@ -33,22 +67,25 @@ The installer looks at the Pythons listed by `py -0p` and any `python` on your P
 
 ### Installer options
 
-Run these from a command prompt in the install folder:
+Most people never need these. Run them from a command prompt in the install folder, like `install.bat -Reset`:
 
 | Option | What it does |
 | --- | --- |
+| `-InstallDir <path>` | Installs into that folder without asking (the app is copied there first) |
+| `-NoShortcut` | Doesn't add the desktop and Start menu shortcut |
 | `-Reset` | Picks settings for your GPU again |
 | `-AllModels` | Also downloads the other clone model size |
 | `-SkipModels` | Skips the model download |
 | `-SkipGguf` | Skips KoboldCpp and the GGUF model (they download the first time you pick GGUF in Speak or the Voice Server) |
 | `-Fresh` | Always installs a private PyTorch, even if one could be reused |
 | `-UsePython <path>` | Reuses PyTorch from that `python.exe` |
-| `-Yes` | Asks no questions (it reuses an existing PyTorch if one is found) |
+| `-Cpu` | Installs without GPU support (very slow, for testing only) |
+| `-Yes` | Asks no questions (it installs in its own folder, reuses an existing PyTorch if one is found and adds the shortcut) |
 | `-KeepCache` | Keeps the download caches instead of deleting them at the end |
 
-## Make voices: `start_studio.bat`
+## Make voices: Voice Studio
 
-The Studio opens in your browser at http://127.0.0.1:7860. The first action in each tab takes a little longer while the model loads.
+Press **1** in the menu (or run `start_studio.bat`). The Studio opens in your browser at http://127.0.0.1:7860. The first action in each tab takes a little longer while the model loads.
 
 **Design a voice.** Write a description: age, gender, pitch, pace, mood, accent. The model reads the *sample line* in that voice. Generate 2 to 4 takes, keep your favourite, name it and save. The saved take becomes the voice's reference clip, so the voice sounds the same every time you use it.
 
@@ -66,9 +103,9 @@ The clip lands in **Reference clip** and the transcript in the box under it. Lis
 
 **My voices.** Try any saved voice with your own text, change its speed, and download the result (also saved in `outputs\`). You can rename voices, fix a transcript (or **Transcribe** one that has none), or delete them here.
 
-## Type and listen: `start_speak.bat`
+## Type and listen: Speak
 
-Speak opens in your browser at http://127.0.0.1:7861. Pick one of your saved voices, type what you want to hear and press **Enter** (or click **Speak**). **Shift+Enter** starts a new line, and long text is fine.
+Press **3** in the menu (or run `start_speak.bat`). Speak opens in your browser at http://127.0.0.1:7861. Pick one of your saved voices, type what you want to hear and press **Enter** (or click **Speak**). **Shift+Enter** starts a new line, and long text is fine.
 
 - The line plays straight away and is saved in the `outputs` folder, named after the voice and its first few words. Choose **wav** or **mp3** under **Save as**; the download button on each player saves another copy wherever you like.
 - Your last ten lines stay on the page under **Earlier** so you can play them again.
@@ -110,9 +147,9 @@ Then click **Reload** and pick a voice for each character.
 - Already using KoboldCpp as SillyTavern's text model? The TTS runs in the same KoboldCpp, so nothing else needs to run.
 - To stop exporting voices, set `"koboldcpp_export": false` in `settings.json`. To use a different folder, change `koboldcpp_voices_dir`.
 
-## Or use the Voice Server: `start_server.bat`
+## Or use the Voice Server
 
-The server runs at **http://127.0.0.1:8890** and opens its control panel at http://127.0.0.1:8890/ui. Keep the window open while you use it. It loads the voice model at startup so the first line plays without a long wait.
+Press **2** in the menu (or run `start_server.bat`). The server runs at **http://127.0.0.1:8890** and opens its control panel at http://127.0.0.1:8890/ui. Keep the window open while you use it. It loads the voice model at startup so the first line plays without a long wait.
 
 ### Full model or GGUF
 
@@ -129,7 +166,7 @@ To start the server on one model without opening the panel, run `start_server.ba
 
 ### SillyTavern
 
-1. Start the voice server.
+1. Start the Voice Server (press **2** in the menu).
 2. In SillyTavern open **Extensions** (the stacked blocks icon) → **TTS**.
 3. Set **Select TTS Provider** to **OpenAI Compatible** and tick **Enabled**.
 4. Fill in the fields from the control panel's **Connect SillyTavern** tab:
@@ -200,11 +237,15 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `koboldcpp_exe` | empty | Path to your own `koboldcpp.exe`; empty uses the one the installer downloaded |
 | `gguf_port` | 5002 | Port of the KoboldCpp that Speak and the Voice Server start and share (yours stays on 5001) |
 | `stt_model` | `openai/whisper-large-v3-turbo` | Speech-to-text model for transcripts (a Hugging Face Whisper model, kept in `models\`, or a folder) |
+| `check_for_updates` | on | The menu asks GitHub whether a newer version is out |
 
 To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base"` and run `install.bat` once to download it.
 
 ## Troubleshooting
 
+- **"Windows protected your PC" when opening `Qwen3-TTS.bat`**: Windows says this about scripts downloaded from the internet. Click **More info**, then **Run anyway**. The installer removes that mark from its files, so it only asks once.
+- **"The rest of Qwen3-TTS Studio isn't next to this file"**: the file was opened from inside the ZIP. Right-click the ZIP, choose **Extract All...**, and open `Qwen3-TTS.bat` in the extracted folder.
+- **A program doesn't open in the browser**: look at its window, which says what went wrong. Pick it in the menu again once it's running to open its page.
 - **`'sox' is not recognized`, `SoX could not be found` or a `flash-attn` warning**: harmless, Qwen3-TTS works without either. The Studio and server hide these now; if you still see them, update to the latest version.
 - **"Your GPU ran out of memory"**: the Studio, the server and Speak can each load a model (Speak uses the server's when the server is running with the full model). Switching the server or Speak to GGUF needs much less. On cards under about 12 GB, close the server while designing voices, or click **Free GPU memory** in either app.
 - **Installer says the GPU was found but PyTorch can't use it**: update your NVIDIA driver from nvidia.com, then run `install.bat` again.
@@ -219,27 +260,26 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 - **Clicking Browse doesn't seem to do anything**: the file window may have opened behind your browser, so check the taskbar. You can always paste the file's path into the box instead.
 - **A clip from a film is in the wrong language**: the film has more than one audio track. Pick the right one under **Audio track** and click **Get clip** again.
 
-## Updating
-
-Download the new ZIP and extract it over the existing folder (or `git pull`), then run `install.bat`. Your voices, settings and downloaded models are kept.
-
 ## Folder layout
 
 ```
-G:\Qwen3TTS\
+Qwen3TTS\                 (wherever you installed it)
+  Qwen3-TTS.bat           the menu
   install.bat, start_studio.bat, start_server.bat, start_speak.bat
-  app\          the Studio, server, Speak and engine code
-  voices\       your saved voices (one folder each: voice.json + reference.wav)
-  koboldcpp_voices\  copies of your voices for KoboldCpp (one .wav per voice)
-  outputs\      audio made in the Studio and Speak
-  models\       downloaded model weights (models\gguf: the GGUF files)
-  settings.json your settings
+  app\                    the Studio, server, Speak and engine code
+  voices\                 your saved voices (one folder each: voice.json + reference.wav)
+  koboldcpp_voices\       copies of your voices for KoboldCpp (one .wav per voice)
+  outputs\                audio made in the Studio and Speak
+  models\                 downloaded model weights (models\gguf: the GGUF files)
+  settings.json           your settings
   .venv\ .python\ .tools\ .cache\   private Python, packages, KoboldCpp and caches
                                     (.python is skipped when an existing PyTorch is reused)
                                     (.cache\youtube: the last few YouTube downloads, and clips cut from videos)
 ```
 
-To uninstall, delete the folder. Back up `voices\` first if you want to keep your voices.
+## Uninstall
+
+Delete the install folder and the **Qwen3-TTS Studio** shortcuts on your desktop and in the Start menu. Back up `voices\` first if you want to keep your voices. Nothing else was installed.
 
 ## Development
 
@@ -250,4 +290,16 @@ Tests run without a GPU using a stand-in engine:
 .venv\Scripts\python -m pytest
 ```
 
-Qwen3-TTS is by the Alibaba Qwen team and is licensed under Apache-2.0.
+### Making a release
+
+1. Put the new version number in `VERSION` and describe the changes under a `## <version>` heading at the top of `CHANGELOG.md`.
+2. Merge that to `main`, then push a tag for it: `git tag v1.0.1` and `git push origin v1.0.1`.
+3. The **Release** workflow runs the tests, builds `Qwen3-TTS-Studio-<version>.zip` with `scripts/build_release.py` and publishes the GitHub release with that ZIP and the changelog.
+
+To build the ZIP yourself, run `python scripts/build_release.py`; it lands in `dist\`.
+
+## Credits and licenses
+
+Qwen3-TTS Studio is released under the [MIT License](LICENSE).
+
+It downloads these during the install, each under its own license: [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) by the Alibaba Qwen team (Apache-2.0), [Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) by OpenAI (MIT), [Demucs](https://github.com/facebookresearch/demucs) by Meta (MIT), [KoboldCpp](https://github.com/LostRuins/koboldcpp) (AGPL-3.0) with the [koboldcpp/tts](https://huggingface.co/koboldcpp/tts) GGUF files, [yt-dlp](https://github.com/yt-dlp/yt-dlp) (Unlicense), PyTorch, Gradio and FastAPI.

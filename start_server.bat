@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 set PYTHONUTF8=1
 if not exist "%~dp0.venv\Scripts\python.exe" (
-    echo Qwen3-TTS Studio is not installed yet. Run install.bat first.
+    echo Qwen3-TTS Studio is not installed yet. Double-click Qwen3-TTS.bat to install it.
     pause
     exit /b 1
 )

@@ -163,7 +163,7 @@ def build(engine: TTSEngine, library: VoiceLibrary) -> gr.Blocks:
             with gr.Accordion("Get the clip from a video or audio file on this PC", open=False):
                 gr.Markdown(FILE_HELP)
                 with gr.Row(equal_height=True):
-                    f_path = gr.Textbox(label="Video or audio file", placeholder=r"e.g. G:\Videos\interview.mp4", scale=5)
+                    f_path = gr.Textbox(label="Video or audio file", placeholder=r"e.g. D:\Videos\interview.mp4", scale=5)
                     f_browse = gr.Button("Browse…", scale=1, min_width=120)
                 f_info = gr.Markdown()
                 f_track_for = gr.State("")  # the file the audio track list below belongs to

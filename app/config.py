@@ -1,7 +1,7 @@
 """Paths and settings shared by the Studio, the voice server and the installer.
 
 Everything (Python, packages, model weights, caches, voices) lives inside the
-folder this repo was extracted to, so installing to G:\\Qwen3TTS keeps the
+install folder, so installing to another drive (D:\\Qwen3TTS, say) keeps the
 C: drive clean.
 """
 
@@ -91,6 +91,8 @@ DEFAULTS: dict[str, Any] = {
     "koboldcpp_url": "http://127.0.0.1:5001",
     # Speech-to-text for filling in a clip's transcript (Hugging Face id, or a folder).
     "stt_model": "openai/whisper-large-v3-turbo",
+    # The menu (Qwen3-TTS.bat) asks GitHub whether a newer version is out.
+    "check_for_updates": True,
     "gpu_name": "",
     "vram_gb": 0.0,
 }

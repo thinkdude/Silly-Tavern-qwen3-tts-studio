@@ -14,3 +14,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 koboldcpp_voices/
+
+# Left in a downloaded copy that was installed into another folder
+.installed-to.txt
+dist/

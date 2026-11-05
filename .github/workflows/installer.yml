@@ -1,0 +1,77 @@
+name: Installer
+
+# Runs the real installer on a Windows machine (CPU only, without the big model
+# downloads): into another folder, then again as an update, and checks the result.
+on:
+  push:
+    branches: [main]
+    paths: ["scripts/**", "*.bat", "app/**", "requirements.txt", "constraints.txt", ".github/workflows/installer.yml"]
+  pull_request:
+    paths: ["scripts/**", "*.bat", "app/**", "requirements.txt", "constraints.txt", ".github/workflows/installer.yml"]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: powershell
+    env:
+      TARGET: C:\Qwen3TTS-ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Windows PowerShell can parse the installer
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\install.ps1", [ref]$null, [ref]$errors)
+          $errors | ForEach-Object { Write-Host "Line $($_.Extent.StartLineNumber): $($_.Message)" }
+          if ($errors) { exit 1 }
+
+      - name: Opening Qwen3-TTS.bat outside its folder says to extract the ZIP
+        run: |
+          $lonely = Join-Path $env:RUNNER_TEMP 'lonely'
+          New-Item -ItemType Directory -Force $lonely | Out-Null
+          Copy-Item Qwen3-TTS.bat $lonely
+          # Input from nul answers its "Press any key". (Piping into it hides the exit code.)
+          $out = cmd /c "$lonely\Qwen3-TTS.bat <nul" | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          Write-Host "Exit code: $code"
+          if ($code -ne 1 -or $out -notmatch 'Extract All') { exit 1 }
+          exit 0  # the expected exit code 1 would otherwise fail this step
+
+      - name: Install into another folder
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes -Cpu -SkipModels -InstallDir $env:TARGET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check the install
+        run: |
+          $t = $env:TARGET
+          foreach ($f in '.venv\Scripts\python.exe', 'settings.json', 'Qwen3-TTS.bat', 'app\menu.py', 'app\icon.ico', 'VERSION') {
+            if (-not (Test-Path (Join-Path $t $f))) { throw "Missing $f" }
+          }
+          $marker = (Get-Content .installed-to.txt -TotalCount 1).Trim()
+          if ($marker -ne $t) { throw "The downloaded copy points at '$marker', not $t" }
+          $ws = New-Object -ComObject WScript.Shell
+          foreach ($dir in [Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs')) {
+            $target = $ws.CreateShortcut((Join-Path $dir 'Qwen3-TTS Studio.lnk')).TargetPath
+            if ($target -ne "$t\Qwen3-TTS.bat") { throw "Shortcut in $dir points at '$target'" }
+          }
+          Set-Location $t  # so Python imports the installed copy of the app, not this checkout
+          & "$t\.venv\Scripts\python.exe" -c "import torch, gradio, qwen_tts; print('imports ok, torch', torch.__version__)"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$t\.venv\Scripts\python.exe" -c "from app import menu; m = menu.Menu(); m.refresh(); print(m.render())"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Install again (an update)
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes -Cpu -SkipModels -InstallDir $env:TARGET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "$env:TARGET\settings.json")) { throw 'settings.json is gone' }

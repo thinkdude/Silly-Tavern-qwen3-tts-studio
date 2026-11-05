@@ -1,11 +1,16 @@
 # Qwen3-TTS Studio installer.
-# Everything is installed inside this folder: a private Python, the packages,
-# the model weights and all caches. Nothing is written to the C: drive.
+# Everything is installed in one folder: the app, a private Python, the packages,
+# the model weights and all caches. Nothing else is written to the C: drive apart
+# from the optional desktop and Start menu shortcuts.
 # If you already have a Python with GPU PyTorch, the installer offers to reuse
 # that PyTorch instead of downloading another copy.
 #
-# Run it through install.bat. Options:
-#   -Yes               don't ask any questions (reuses an existing PyTorch if one is found)
+# Run it through Qwen3-TTS.bat or install.bat. The first time, it asks where to
+# install: in this folder, or in another one (the app is copied there first).
+# Options:
+#   -InstallDir <path> install into this folder without asking (it is created if needed)
+#   -Yes               don't ask any questions (installs here, reuses an existing PyTorch if one is found)
+#   -NoShortcut        don't add the desktop and Start menu shortcuts
 #   -SkipModels        don't download model weights (do it later with install.bat)
 #   -SkipGguf          don't download KoboldCpp and the GGUF model (Speak and the voice server get them when you pick GGUF)
 #   -AllModels         also download the other clone model size
@@ -24,7 +29,9 @@ param(
     [switch]$Cpu,
     [switch]$Fresh,
     [string]$UsePython,
-    [switch]$KeepCache
+    [switch]$KeepCache,
+    [string]$InstallDir,
+    [switch]$NoShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -56,21 +63,201 @@ function Run($exe, [string[]]$argList, $what) {
     if ($code -ne 0) { Fail "$what failed (exit code $code). Scroll up for details." }
 }
 
+$Version = 'dev'
+$versionFile = Join-Path $Root 'VERSION'
+if (Test-Path -LiteralPath $versionFile) { $Version = (Get-Content -LiteralPath $versionFile | Select-Object -First 1).Trim() }
+
 Write-Host ''
-Write-Host 'Qwen3-TTS Studio installer' -ForegroundColor Green
+Write-Host "Qwen3-TTS Studio $Version installer" -ForegroundColor Green
+
+# --- 0. Where to install ---------------------------------------------------------
+# About how much space a full install takes (models, PyTorch, packages, KoboldCpp).
+$NeedGb = 24
+$ShortcutName = 'Qwen3-TTS Studio.lnk'
+$installedHere = Test-Path (Join-Path $Root '.venv\Scripts\python.exe')
+
+function Same-Dir([string]$a, [string]$b) {
+    return [string]::Equals($a.TrimEnd('\'), $b.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+function Is-Under([string]$dir, [string]$parent) {
+    if (-not $parent) { return $false }
+    return ($dir.TrimEnd('\') + '\').StartsWith($parent.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+}
+function Normalize-Dir([string]$p) {
+    # "D", "D:" or "D:\" mean a Qwen3TTS folder on that drive. Anything else needs a full path.
+    $p = $p.Trim().Trim('"').Trim()
+    if ($p -match '^[A-Za-z]:?\\?$') { return $p.Substring(0, 1).ToUpper() + ':\Qwen3TTS' }
+    if ($p -notmatch '^[A-Za-z]:\\') { return $null }
+    try { return [IO.Path]::GetFullPath($p).TrimEnd('\') } catch { return $null }
+}
+function Free-Gb([string]$dir) {
+    try { return [math]::Floor((New-Object IO.DriveInfo (Split-Path -Qualifier $dir)).AvailableFreeSpace / 1GB) } catch { return $null }
+}
+function Fixed-Drives {
+    return @([IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady })
+}
+function In-OneDrive([string]$dir) {
+    foreach ($od in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
+        if (Is-Under $dir $od) { return $true }
+    }
+    return $false
+}
+function Downloads-Dir {
+    try {
+        $p = (New-Object -ComObject Shell.Application).NameSpace('shell:Downloads').Self.Path
+        if ($p) { return $p }
+    } catch {}
+    return (Join-Path $env:USERPROFILE 'Downloads')
+}
+function Find-PreviousInstall {
+    # The shortcuts an earlier install made point at its Qwen3-TTS.bat.
+    try {
+        $ws = New-Object -ComObject WScript.Shell
+        foreach ($dir in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
+            $lnk = Join-Path $dir $ShortcutName
+            if (-not (Test-Path -LiteralPath $lnk)) { continue }
+            $t = $ws.CreateShortcut($lnk).TargetPath
+            if ($t -and (Test-Path -LiteralPath $t)) { return (Split-Path -Parent $t) }
+        }
+    } catch {}
+    return $null
+}
+function Folder-Problem([string]$dir) {
+    # Why $dir can't be used, or $null when it can.
+    $qualifier = Split-Path -Qualifier $dir
+    if (-not (Test-Path -LiteralPath "$qualifier\")) { return "There is no $qualifier drive on this PC." }
+    if (-not (Same-Dir $dir $Root) -and (Is-Under $dir $Root)) { return 'That folder is inside this one. Pick a folder somewhere else.' }
+    if (Is-Under $dir ([IO.Path]::GetTempPath())) { return 'That is a temporary folder, which Windows empties now and then. Pick another one.' }
+    return $null
+}
+function Writable-Problem([string]$dir) {
+    try {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $probe = Join-Path $dir ('.write-test-' + [guid]::NewGuid().ToString('N'))
+        [IO.File]::WriteAllText($probe, 'ok')
+        Remove-Item -LiteralPath $probe -Force
+    } catch {
+        return "Windows won't let the installer write to $dir. Pick a folder of your own, such as D:\Qwen3TTS (not inside Program Files)."
+    }
+    return $null
+}
+function Confirm-Folder([string]$dir) {
+    # Point out anything that would make $dir a poor choice and let the user decide.
+    if ($dir -match '\s') { Warn 'The path has spaces in it. That should work, but a path without spaces (like D:\Qwen3TTS) is the safest.' }
+    if ($dir -match '[^\x00-\x7F]') { Warn 'The path has accented or non-English letters in it. Some tools trip over those; plain letters are the safest.' }
+    $notes = @()
+    if (In-OneDrive $dir) { $notes += "$dir is synced by OneDrive, which would upload the models (about $NeedGb GB) to the cloud." }
+    if (Is-Under $dir (Downloads-Dir)) { $notes += 'That is inside your Downloads folder, which Windows can clean up automatically.' }
+    $free = Free-Gb $dir
+    $hasInstall = Test-Path (Join-Path $dir '.venv\Scripts\python.exe')
+    if (-not $hasInstall -and $null -ne $free -and $free -lt $NeedGb) {
+        $notes += "$(Split-Path -Qualifier $dir) has $free GB free, and a full install needs about $NeedGb GB."
+    }
+    if (-not $notes) { return $true }
+    foreach ($n in $notes) { Warn $n }
+    $answer = Read-Host '    Use it anyway? (y/N)'
+    return ($answer -match '^[yY]')
+}
+function Write-Marker([string]$dest) {
+    # Qwen3-TTS.bat in this folder reads this and opens the installed copy instead.
+    $cp = [Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage
+    $enc = if ($cp -eq 65001) { New-Object Text.UTF8Encoding $false } else { [Text.Encoding]::GetEncoding($cp) }
+    [IO.File]::WriteAllText((Join-Path $Root '.installed-to.txt'), $dest + "`r`n", $enc)
+}
+function Copy-AppTo([string]$dest) {
+    Step "Copying Qwen3-TTS Studio to $dest"
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $opts = @('/R:2', '/W:2', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+    $ErrorActionPreference = 'Continue'
+    # The code folders are mirrored so files dropped in a newer version don't linger.
+    # Voices, models, settings and the rest of an existing install are left alone.
+    foreach ($sub in 'app', 'scripts') {
+        & robocopy (Join-Path $Root $sub) (Join-Path $dest $sub) /MIR /XD __pycache__ @opts | Out-Null
+        if ($LASTEXITCODE -ge 8) { Fail "Copying the $sub folder to $dest failed (robocopy code $LASTEXITCODE)." }
+    }
+    & robocopy $Root $dest /XF settings.json .installed-to.txt @opts | Out-Null
+    if ($LASTEXITCODE -ge 8) { Fail "Copying to $dest failed (robocopy code $LASTEXITCODE)." }
+    $ErrorActionPreference = 'Stop'
+}
+
+$target = $null
+if ($InstallDir) {
+    $target = Normalize-Dir $InstallDir
+    if (-not $target) { Fail "-InstallDir needs a full path such as D:\Qwen3TTS (got: $InstallDir)" }
+    if (-not (Same-Dir $target $Root)) {
+        $problem = Folder-Problem $target
+        if (-not $problem) { $problem = Writable-Problem $target }
+        if ($problem) { Fail $problem }
+    }
+} elseif (-not $installedHere -and -not $Yes) {
+    $previous = Find-PreviousInstall
+    if ($previous -and (Same-Dir $previous $Root)) { $previous = $null }
+    $default = $Root
+    $unsafe = (Is-Under $Root ([IO.Path]::GetTempPath())) -or (In-OneDrive $Root) -or (Is-Under $Root (Downloads-Dir))
+    if ($previous) {
+        $default = $previous
+    } elseif ($unsafe) {
+        # Suggest the drive with the most free space instead.
+        $best = Fixed-Drives | Sort-Object AvailableFreeSpace -Descending | Select-Object -First 1
+        if ($best) { $default = $best.Name.Substring(0, 2) + '\Qwen3TTS' }
+    }
+
+    Write-Host ''
+    if ($previous) {
+        Info "Qwen3-TTS Studio is already installed in $previous."
+        Info 'Press Enter to update it there (your voices, settings and models are kept),'
+        Info 'or type a different folder to install a separate copy.'
+    } else {
+        Info 'Where should it be installed? Everything goes into one folder: the programs,'
+        Info "a private copy of Python and the voice models (about $NeedGb GB in all)."
+        Info "Press Enter for $default, or type a different folder (for example D:\Qwen3TTS)."
+    }
+    $drives = Fixed-Drives | ForEach-Object { '{0} {1:N0} GB' -f $_.Name.Substring(0, 2), [math]::Floor($_.AvailableFreeSpace / 1GB) }
+    if ($drives) { Info ('Free space: ' + ($drives -join ',  ')) }
+    while (-not $target) {
+        Write-Host ''
+        $answer = Read-Host "    Install folder [$default]"
+        $dir = if ($answer.Trim()) { Normalize-Dir $answer } else { $default }
+        if (-not $dir) { Warn 'Type a full path that starts with a drive letter, such as D:\Qwen3TTS.'; continue }
+        $problem = Folder-Problem $dir
+        if ($problem) { Warn $problem; continue }
+        if (-not ((Same-Dir $dir $previous) -or (Confirm-Folder $dir))) { continue }
+        $problem = Writable-Problem $dir
+        if ($problem) { Warn $problem; continue }
+        $target = $dir
+    }
+} elseif (-not $installedHere) {
+    $free = Free-Gb $Root
+    if ($null -ne $free -and $free -lt $NeedGb) { Warn "This drive has $free GB free, and a full install needs about $NeedGb GB." }
+}
+
+if ($target -and -not (Same-Dir $target $Root)) {
+    Copy-AppTo $target
+    Write-Marker $target
+    # Carry on with the copy's own installer, which installs into its folder.
+    $forward = @{}
+    foreach ($k in $PSBoundParameters.Keys) { $forward[$k] = $PSBoundParameters[$k] }
+    $forward['InstallDir'] = $target
+    & (Join-Path $target 'scripts\install.ps1') @forward
+    $code = $LASTEXITCODE
+    if ($code -eq 0) {
+        Info "You can delete the folder you downloaded ($Root) now: everything runs from $target."
+        Write-Host ''
+    }
+    exit $code
+}
+
 Write-Host "Install folder: $Root"
 
-# --- 0. Location check ------------------------------------------------------
-if ($Root -match '\s') {
-    Warn 'The install folder path contains spaces. That usually works, but G:\Qwen3TTS is safest.'
+# Files extracted from a downloaded ZIP are marked as coming from the internet, which
+# makes Windows ask before every start. They're installed now, so drop that mark.
+$ErrorActionPreference = 'Continue'
+Get-ChildItem -LiteralPath $Root -File -Force | Unblock-File -ErrorAction SilentlyContinue
+foreach ($sub in 'app', 'scripts') {
+    $d = Join-Path $Root $sub
+    if (Test-Path -LiteralPath $d) { Get-ChildItem -LiteralPath $d -Recurse -File -Force | Unblock-File -ErrorAction SilentlyContinue }
 }
-$drive = Split-Path -Qualifier $Root
-if ($drive -ne 'G:' -and -not $Yes) {
-    Warn "This folder is on $drive, not G:."
-    Warn 'To install on G:, close this window, move the folder to G:\Qwen3TTS and run install.bat again.'
-    $answer = Read-Host '    Install here anyway? (y/N)'
-    if ($answer -notmatch '^[yY]') { exit 1 }
-}
+$ErrorActionPreference = 'Stop'
 
 # Keep every cache inside the install folder.
 $env:UV_CACHE_DIR = Join-Path $Root '.cache\uv'
@@ -387,9 +574,56 @@ if (-not $KeepCache) {
     Info ('Freed {0:N1} GB' -f ($freed / 1GB))
 }
 
+# --- 8. Shortcuts -------------------------------------------------------------------
+# A first install offers desktop and Start menu shortcuts to the menu (Qwen3-TTS.bat).
+# Later runs only refresh the shortcuts that already point at this folder.
+$launcher = Join-Path $Root 'Qwen3-TTS.bat'
+$haveShortcut = $false
+if (-not $NoShortcut -and (Test-Path -LiteralPath $launcher)) {
+    try {
+        $ws = New-Object -ComObject WScript.Shell
+        $links = @(
+            (Join-Path ([Environment]::GetFolderPath('Desktop')) $ShortcutName),
+            (Join-Path ([Environment]::GetFolderPath('Programs')) $ShortcutName)
+        )
+        $make = @()
+        foreach ($lnk in $links) {
+            if ((Test-Path -LiteralPath $lnk) -and (Same-Dir (Split-Path -Parent $ws.CreateShortcut($lnk).TargetPath) $Root)) { $make += $lnk }
+        }
+        if (-not $installedHere) {
+            $add = $true
+            if (-not $Yes) {
+                Write-Host ''
+                $answer = Read-Host '    Add a Qwen3-TTS Studio shortcut to your desktop and Start menu? (Y/n)'
+                $add = $answer -notmatch '^[nN]'
+            }
+            if ($add) { $make = $links }
+        }
+        $icon = Join-Path $Root 'app\icon.ico'
+        foreach ($lnk in $make) {
+            $s = $ws.CreateShortcut($lnk)
+            $s.TargetPath = $launcher
+            $s.WorkingDirectory = $Root
+            $s.Description = 'Make voices with Qwen3-TTS and use them in SillyTavern and other apps'
+            if (Test-Path -LiteralPath $icon) { $s.IconLocation = "$icon,0" }
+            $s.Save()
+            $haveShortcut = $true
+        }
+        if ($make -and -not $installedHere) { Info 'Added the Qwen3-TTS Studio shortcut to your desktop and Start menu.' }
+    } catch {
+        Warn "Couldn't create the shortcuts ($($_.Exception.Message)). Start Qwen3-TTS.bat from the install folder instead."
+    }
+}
+
 Write-Host ''
 Write-Host 'All done!' -ForegroundColor Green
-Write-Host '  start_studio.bat   design and clone voices'
-Write-Host '  start_server.bat   voice server for SillyTavern and other apps'
-Write-Host '  start_speak.bat    type something and hear it in one of your voices'
+Info "Qwen3-TTS Studio is installed in $Root"
+if ($haveShortcut) {
+    Info 'To start it, use the Qwen3-TTS Studio shortcut on your desktop or in the Start menu'
+    Info '(or double-click Qwen3-TTS.bat in that folder).'
+} else {
+    Info 'To start it, double-click Qwen3-TTS.bat in that folder.'
+}
+Info 'Its menu starts the Voice Studio, the Voice Server and Speak.'
 Write-Host ''
+exit 0

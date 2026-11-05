@@ -67,6 +67,9 @@ DEFAULTS: dict[str, Any] = {
     # SillyTavern itself defaults to port 8000, so the voice server uses 8890.
     "server_port": 8890,
     "server_idle_unload_minutes": 0,
+    # The voice server's model: "full" (clone_model) or "gguf" (KoboldCpp with the GGUF files
+    # below). The switch in its control panel sets it; start_server.bat --engine overrides it.
+    "server_engine": "full",
     # The type-and-speak app (start_speak.bat).
     "speak_port": 7861,
     "speak_idle_unload_minutes": 10,
@@ -77,7 +80,7 @@ DEFAULTS: dict[str, Any] = {
     "gguf_tokenizer": "qwen3-tts-tokenizer-f16.gguf",
     # Empty uses the KoboldCpp the installer downloads into .tools/koboldcpp.
     "koboldcpp_exe": "",
-    # Where Speak runs its own KoboldCpp, apart from yours on koboldcpp_url.
+    # Where Speak and the voice server run their KoboldCpp (they share it), apart from yours on koboldcpp_url.
     "gguf_port": 5002,
     # Optional. When set, API clients must send "Authorization: Bearer <key>".
     "api_key": "",

@@ -4,7 +4,7 @@ Run [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) on your own Windows PC with
 
 - **Voice Studio** for making voices. Describe a voice in plain English ("gravelly old man, slow and weary") or clone one from a short audio clip or a YouTube link, then save it to your voice library.
 - **Speak** for typing anything and hearing it in one of your saved voices, saved as a WAV or MP3. It can use the full model or the small GGUF model (through KoboldCpp, which the installer sets up).
-- **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server** (full model, most accurate voices). Both use the OpenAI text-to-speech API that SillyTavern understands.
+- **Playback in SillyTavern**, either through **KoboldCpp** (small GGUF model, low GPU memory) or through the included **Voice Server**, which speaks with the full model (most accurate voices) or the GGUF one, your pick, and plays the same line from both so you can compare. Both use the OpenAI text-to-speech API that SillyTavern understands.
 
 Everything (Python, packages, models, your voices) stays inside one folder, so it can live on your G: drive without touching C:.
 
@@ -21,7 +21,7 @@ Everything (Python, packages, models, your voices) stays inside one folder, so i
 2. Extract it so the files sit in **`G:\Qwen3TTS`**. You should end up with `G:\Qwen3TTS\install.bat`, not `G:\Qwen3TTS\qwen3-tts-studio-main\install.bat`.
 3. Double-click **`install.bat`**. If Windows shows "Windows protected your PC", click **More info → Run anyway**.
 
-The installer checks your graphics card, downloads a private copy of Python, installs PyTorch with the right CUDA version, picks settings for your GPU and downloads the models (around 14 GB in total, including the speech-to-text and music remover models for cloning), plus KoboldCpp and the GGUF voice model for Speak (about 2.3 GB more). It takes a while the first time. If anything fails, run `install.bat` again; it picks up where it left off.
+The installer checks your graphics card, downloads a private copy of Python, installs PyTorch with the right CUDA version, picks settings for your GPU and downloads the models (around 14 GB in total, including the speech-to-text and music remover models for cloning), plus KoboldCpp and the GGUF voice model for Speak and the Voice Server (about 2.3 GB more). It takes a while the first time. If anything fails, run `install.bat` again; it picks up where it left off.
 
 ### Already have Python with PyTorch?
 
@@ -40,7 +40,7 @@ Run these from a command prompt in the install folder:
 | `-Reset` | Picks settings for your GPU again |
 | `-AllModels` | Also downloads the other clone model size |
 | `-SkipModels` | Skips the model download |
-| `-SkipGguf` | Skips KoboldCpp and the GGUF model (Speak downloads them the first time you pick GGUF) |
+| `-SkipGguf` | Skips KoboldCpp and the GGUF model (they download the first time you pick GGUF in Speak or the Voice Server) |
 | `-Fresh` | Always installs a private PyTorch, even if one could be reused |
 | `-UsePython <path>` | Reuses PyTorch from that `python.exe` |
 | `-Yes` | Asks no questions (it reuses an existing PyTorch if one is found) |
@@ -72,14 +72,14 @@ Speak opens in your browser at http://127.0.0.1:7861. Pick one of your saved voi
 - Your last ten lines stay on the page under **Earlier** so you can play them again.
 - Not quite right? Press **Speak** again for a slightly different take, or change the **Speed**.
 - It remembers the voice, speed and file type you picked last time.
-- If the Voice Server is running, Speak lets it do the talking, so the voice model isn't loaded onto your GPU twice. Otherwise Speak loads its own copy when it starts (the first line can take a minute) and frees it after 10 idle minutes.
+- If the Voice Server is running with the full model, Speak lets it do the talking, so the voice model isn't loaded onto your GPU twice. Otherwise Speak loads its own copy when it starts (the first line can take a minute) and frees it after 10 idle minutes.
 
 **Full model or GGUF.** Under **Voice model**, pick which one speaks:
 
 - **Full model (best quality)**: Qwen3-TTS itself, the same model the Studio uses. It sounds closest to your voices because it also uses each voice's transcript.
 - **GGUF with KoboldCpp**: the 0.6B model as a GGUF file, run by KoboldCpp. It needs less GPU memory, but it only copies the sound of each voice's clip, so voices are a little less exact.
 
-You don't need to set up KoboldCpp for this. The installer downloads it into `.tools\koboldcpp` and the GGUF files into `models\gguf` (if they're missing, Speak downloads them the first time you pick GGUF). Speak starts KoboldCpp in the background with no text model, restarts it when you use a voice it hasn't loaded yet, and stops it when you switch back to the full model or close Speak. If your own KoboldCpp for SillyTavern is already running with the voice loaded, Speak uses that one instead. Switching models frees the other one's GPU memory, and Speak remembers your choice.
+You don't need to set up KoboldCpp for this. The installer downloads it into `.tools\koboldcpp` and the GGUF files into `models\gguf` (if they're missing, Speak downloads them the first time you pick GGUF). Speak starts KoboldCpp in the background with no text model, restarts it when you use a voice it hasn't loaded yet, and stops it when you switch back to the full model or close Speak. If your own KoboldCpp for SillyTavern is already running with the voice loaded, Speak uses that one instead, and when the Voice Server uses GGUF too, the two share one KoboldCpp. Switching models frees the other one's GPU memory, and Speak remembers your choice.
 - New voice made in the Studio? Click **Refresh voices**.
 
 ## Play voices with KoboldCpp
@@ -111,6 +111,19 @@ Then click **Reload** and pick a voice for each character.
 ## Or use the Voice Server: `start_server.bat`
 
 The server runs at **http://127.0.0.1:8890** and opens its control panel at http://127.0.0.1:8890/ui. Keep the window open while you use it. It loads the voice model at startup so the first line plays without a long wait.
+
+### Full model or GGUF
+
+At the top of the control panel, **Voice model** picks which model speaks for SillyTavern and your other apps:
+
+- **Full model (best quality)**: Qwen3-TTS itself. It sounds closest to your voices because it also uses each voice's transcript.
+- **GGUF with KoboldCpp**: the small 0.6B GGUF model, run by KoboldCpp. It needs less GPU memory, but it only copies the sound of each voice's clip, so voices are a little less exact.
+
+SillyTavern's settings are the same for both, so you can switch at any time without touching SillyTavern. Switching frees the other model's GPU memory, and the server remembers your choice next time. You don't need to set up KoboldCpp: the server starts it in the background with no text model (KoboldCpp and the GGUF files come with the installer, or download the first time you pick GGUF). KoboldCpp restarts by itself, which takes about a minute, the first time a voice it hasn't loaded yet is used. If Speak is also set to GGUF, the two share one KoboldCpp.
+
+**Compare them.** On the **Test** tab, pick a voice, type a line and click **Compare the full and GGUF models**. You get the same line from each model side by side, with how long each took. Every take comes out a little different, so try a few lines before you decide. Afterwards only the model you picked stays loaded.
+
+To start the server on one model without opening the panel, run `start_server.bat --engine gguf` (or `--engine full`).
 
 ### SillyTavern
 
@@ -148,7 +161,7 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `POST /v1/audio/speech` | `input`, `voice` (id or name), optional `response_format` (`mp3`, `wav`, `flac`, `opus`, `pcm`; `aac` returns mp3), `speed` (0.25 to 4), and `language` to override the voice's language |
 | `GET /v1/audio/voices` | Lists saved voices |
 | `GET /v1/models` | Lists the model name (`qwen3-tts`) |
-| `GET /health` | Server, GPU and voice status |
+| `GET /health` | Server, GPU, voice model and voice status |
 | `/ui` | Control panel |
 | `/docs` | Interactive API docs |
 
@@ -159,7 +172,7 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 - **Smaller voice model:** the 0.6B clone model saves about 2 GB, with slightly less accurate voices. See `clone_model` in Settings below.
 - **Reuse an existing PyTorch** if you have one (see above). That skips the roughly 3 GB PyTorch download.
 - **Speech-to-text model (about 1.6 GB):** if you always type transcripts yourself, delete `models\whisper-large-v3-turbo`. It downloads again by itself the next time you click **Transcribe** or a YouTube clip needs it.
-- **GGUF model and KoboldCpp (about 2.3 GB):** if you never use GGUF in Speak, delete `models\gguf` and `.tools\koboldcpp`, and install with `install.bat -SkipGguf` from then on.
+- **GGUF model and KoboldCpp (about 2.3 GB):** if you never use GGUF in Speak or the Voice Server, delete `models\gguf` and `.tools\koboldcpp`, and install with `install.bat -SkipGguf` from then on.
 
 ## Settings
 
@@ -171,7 +184,8 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `dtype` | `bfloat16` (RTX 30-series and newer), else `float16` | Precision. Try `float32` if output is silent or garbled |
 | `keep_both_loaded` | on with 16 GB+ VRAM | Keep the design and clone models in memory together instead of swapping |
 | `studio_idle_unload_minutes` | 10 | Studio frees GPU memory after this many idle minutes |
-| `server_idle_unload_minutes` | 0 | Same for the server; 0 keeps the model loaded |
+| `server_idle_unload_minutes` | 0 | Same for the server's full model; 0 keeps the model loaded |
+| `server_engine` | `full` | The Voice Server's model, `full` or `gguf` (its control panel's **Voice model** switch sets it) |
 | `speak_idle_unload_minutes` | 10 | Same for Speak |
 | `server_port`, `studio_port`, `speak_port` | 8890, 7860, 7861 | Ports |
 | `server_host` | `127.0.0.1` | Use `0.0.0.0` to allow other PCs on your network |
@@ -182,7 +196,7 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `speak_engine` | `full` | Speak's voice model, `full` or `gguf` (Speak's **Voice model** switch sets it) |
 | `gguf_model`, `gguf_tokenizer` | `qwen3-tts-0.6b-q8_0.gguf`, `qwen3-tts-tokenizer-f16.gguf` | GGUF files from [koboldcpp/tts](https://huggingface.co/koboldcpp/tts), kept in `models\gguf`, or full paths to your own copies |
 | `koboldcpp_exe` | empty | Path to your own `koboldcpp.exe`; empty uses the one the installer downloaded |
-| `gguf_port` | 5002 | Port of the KoboldCpp that Speak starts (yours stays on 5001) |
+| `gguf_port` | 5002 | Port of the KoboldCpp that Speak and the Voice Server start and share (yours stays on 5001) |
 | `stt_model` | `openai/whisper-large-v3-turbo` | Speech-to-text model for transcripts (a Hugging Face Whisper model, kept in `models\`, or a folder) |
 
 To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base"` and run `install.bat` once to download it.
@@ -190,12 +204,12 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 ## Troubleshooting
 
 - **`'sox' is not recognized`, `SoX could not be found` or a `flash-attn` warning**: harmless, Qwen3-TTS works without either. The Studio and server hide these now; if you still see them, update to the latest version.
-- **"Your GPU ran out of memory"**: the Studio, the server and Speak can each load a model (Speak uses the server's when the server is running). On cards under about 12 GB, close the server while designing voices, or click **Free GPU memory** in either app.
+- **"Your GPU ran out of memory"**: the Studio, the server and Speak can each load a model (Speak uses the server's when the server is running with the full model). Switching the server or Speak to GGUF needs much less. On cards under about 12 GB, close the server while designing voices, or click **Free GPU memory** in either app.
 - **Installer says the GPU was found but PyTorch can't use it**: update your NVIDIA driver from nvidia.com, then run `install.bat` again.
 - **Takes come out silent, or "The model produced silence"**: your graphics card doesn't handle the current precision well (most likely on GTX 10/16 or RTX 20 series cards). On the Studio's **System** tab set **Precision** to `float32` and click **Apply**. It needs about twice the GPU memory; if that runs out, try `bfloat16`, or switch to the 0.6B clone model.
 - **SillyTavern says the TTS request failed**: make sure the server window is open, the endpoint ends in `/v1/audio/speech`, and the voice id is in the control panel's list. The **Request log** tab shows what arrived.
 - **Clone sounds off**: use a cleaner 5 to 15 second clip and make sure the transcript matches word for word.
-- **Speak's GGUF model doesn't start or says KoboldCpp couldn't say that**: KoboldCpp's messages are in `.cache\koboldcpp-speak.log`. If it mentions CUDA, update your NVIDIA driver. You can always switch back to the full model.
+- **The GGUF model doesn't start or says KoboldCpp couldn't say that** (in Speak or the Voice Server): KoboldCpp's messages are in `.cache\koboldcpp-gguf.log`. If it mentions CUDA, update your NVIDIA driver. You can always switch back to the full model.
 - **A port is already in use**: change `studio_port`, `server_port`, `speak_port` or `gguf_port` in `settings.json`.
 - **"Couldn't get that video"**: YouTube changes often, and the downloader has to keep up. Click **Update the YouTube downloader** under the YouTube box (running `install.bat` again updates it too) and try again. If YouTube asks you to sign in to prove you're not a bot, wait a while and try again later.
 - **The transcript has mistakes**: speech-to-text and automatic captions mishear names and mumbled words, so always read the transcript while listening to the clip and fix it before you save the voice.

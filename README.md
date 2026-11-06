@@ -303,8 +303,8 @@ Tests run without a GPU using a stand-in engine:
 ### Making a release
 
 1. Put the new version number in `VERSION` and describe the changes under a `## <version>` heading at the top of `CHANGELOG.md`.
-2. Merge that to `main`, then push a tag for it: `git tag v1.0.1` and `git push origin v1.0.1`.
-3. The **Release** workflow runs the tests, builds `Qwen3-TTS-Studio-<version>.zip` with `scripts/build_release.py` and publishes the GitHub release with that ZIP and the changelog.
+2. Merge that to `main`. Then on GitHub open **Actions**, pick **Release**, click **Run workflow**, keep the branch on `main`, tick **Publish** and click **Run workflow**. (Pushing a tag does the same: `git tag v1.0.1` and `git push origin v1.0.1`.)
+3. The **Release** workflow runs the tests and the Windows installer test, builds `Qwen3-TTS-Studio-<version>.zip` with `scripts/build_release.py`, tags `main` as `v<version>` and publishes the GitHub release with that ZIP and the changelog. Without **Publish** ticked, it only builds the ZIP, which you can download from the run's page to try first.
 
 To build the ZIP yourself, run `python scripts/build_release.py`; it lands in `dist\`.
 

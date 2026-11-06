@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TOP = "Qwen3-TTS-Studio"
-REPO = "thinkdude/qwen3-tts-studio"
+REPO = "thinkdude/Silly-Tavern-qwen3-tts-studio"
 # Files in the repo that aren't needed to install or run.
 LEAVE_OUT = ("tests/", ".github/", ".gitignore", ".gitattributes", "scripts/build_release.py")
 WINDOWS_LINE_ENDINGS = (".bat", ".cmd", ".ps1")

@@ -38,7 +38,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from . import audio, koboldcpp
+from . import audio, koboldcpp, reuse
 from .config import CACHE_DIR, MODELS_DIR, ROOT, load_settings, setup_environment
 from .textsplit import split_text
 from .voices import Voice, VoiceLibrary
@@ -122,14 +122,18 @@ def install(settings: dict, log=print) -> None:
     if not exe.exists():
         if (settings.get("koboldcpp_exe") or "").strip():
             raise ValueError(f"koboldcpp_exe in settings.json points to {exe}, which doesn't exist.")
-        log(f"Downloading KoboldCpp ({exe.name}, about 600 MB) ...")
-        _download(EXE_URL.format(name=exe.name), exe)
+        # Another Qwen3-TTS Studio folder on this PC may already have it.
+        if not reuse.reuse_file("", exe.name, exe, log, install_subdir=".tools/koboldcpp"):
+            log(f"Downloading KoboldCpp ({exe.name}, about 600 MB) ...")
+            _download(EXE_URL.format(name=exe.name), exe)
     for name in (settings["gguf_model"], settings["gguf_tokenizer"]):
         p = model_path(name)
         if p.exists():
             continue
         if Path(name).is_absolute():
             raise ValueError(f"{name} (set in settings.json) doesn't exist.")
+        if reuse.reuse_file(GGUF_REPO, name, p, log):
+            continue
         from huggingface_hub import hf_hub_download
 
         log(f"Downloading {name} ...")

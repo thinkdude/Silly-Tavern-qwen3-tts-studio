@@ -19,6 +19,12 @@
 #   -Fresh             always install a private PyTorch, even if one could be reused
 #   -UsePython <path>  reuse PyTorch from this python.exe (e.g. a conda env or another app's venv)
 #   -KeepCache         keep the download caches instead of deleting them at the end
+#   -ModelsFrom <path> reuse the models in another Qwen3-TTS Studio folder instead of downloading them
+#
+# Anything already installed is skipped: Python, PyTorch, packages and models are
+# checked first, so running it again is quick and works without internet. Models
+# already on this PC (in the Hugging Face cache other AI apps share, or in another
+# Qwen3-TTS Studio folder) are linked or copied instead of downloaded.
 
 param(
     [switch]$Yes,
@@ -31,7 +37,8 @@ param(
     [string]$UsePython,
     [switch]$KeepCache,
     [string]$InstallDir,
-    [switch]$NoShortcut
+    [switch]$NoShortcut,
+    [string]$ModelsFrom
 )
 
 $ErrorActionPreference = 'Stop'
@@ -238,6 +245,8 @@ if ($target -and -not (Same-Dir $target $Root)) {
     $forward = @{}
     foreach ($k in $PSBoundParameters.Keys) { $forward[$k] = $PSBoundParameters[$k] }
     $forward['InstallDir'] = $target
+    # The copy can reuse models from this folder if it has any.
+    $env:QWEN3TTS_OTHER_INSTALLS = (@($Root, $env:QWEN3TTS_OTHER_INSTALLS) | Where-Object { $_ }) -join ';'
     & (Join-Path $target 'scripts\install.ps1') @forward
     $code = $LASTEXITCODE
     if ($code -eq 0) {
@@ -258,6 +267,18 @@ foreach ($sub in 'app', 'scripts') {
     if (Test-Path -LiteralPath $d) { Get-ChildItem -LiteralPath $d -Recurse -File -Force | Unblock-File -ErrorAction SilentlyContinue }
 }
 $ErrorActionPreference = 'Stop'
+
+# Models already on this PC are reused instead of downloaded (see app\reuse.py): the
+# Hugging Face cache other AI apps share, and other Qwen3-TTS Studio folders.
+if (-not $env:QWEN3TTS_USER_HF_HOME) { $env:QWEN3TTS_USER_HF_HOME = $env:HF_HOME }
+if (-not $env:QWEN3TTS_USER_HF_HUB_CACHE) { $env:QWEN3TTS_USER_HF_HUB_CACHE = $env:HF_HUB_CACHE }
+$others = @($env:QWEN3TTS_OTHER_INSTALLS -split ';')
+$others += Find-PreviousInstall
+if ($ModelsFrom) {
+    if (-not (Test-Path -LiteralPath $ModelsFrom)) { Fail "-ModelsFrom: $ModelsFrom doesn't exist." }
+    $others += $ModelsFrom
+}
+$env:QWEN3TTS_OTHER_INSTALLS = (@($others | Where-Object { $_ -and -not (Same-Dir $_ $Root) }) | Select-Object -Unique) -join ';'
 
 # Keep every cache inside the install folder.
 $env:UV_CACHE_DIR = Join-Path $Root '.cache\uv'
@@ -436,12 +457,50 @@ if (Test-Path $reuseMarker) {
 }
 
 # --- 4. Python environment and packages -----------------------------------------
+function Test-Packages([string[]]$modules) {
+    # Whether .venv has these packages (found without importing them, which is slow).
+    $list = ($modules | ForEach-Object { "'$_'" }) -join ','
+    $ErrorActionPreference = 'Continue'
+    & $py -c "import importlib.util as u, sys; sys.exit(any(u.find_spec(m) is None for m in [$list]))" 2>$null | Out-Null
+    $ok = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = 'Stop'
+    return $ok
+}
+
 function Install-Requirements([string[]]$extra) {
-    Step 'Installing Qwen3-TTS and the app requirements'
+    $present = (Test-Path $py) -and (Test-Packages @('qwen_tts', 'gradio', 'fastapi', 'uvicorn', 'yt_dlp', 'demucs', 'imageio_ffmpeg', 'lameenc', 'hf_xet'))
+    if ($present) {
+        Step 'Checking Qwen3-TTS and the app requirements (already installed; only updates are fetched)'
+    } else {
+        Step 'Installing Qwen3-TTS and the app requirements'
+    }
     # yt-dlp has to keep up with YouTube, so running install.bat again always updates it.
     $reqArgs = @('pip', 'install', '--python', $py, '-r', (Join-Path $Root 'requirements.txt'),
         '--upgrade-package', 'yt-dlp', '--upgrade-package', 'yt-dlp-ejs') + $extra
-    Run $uv $reqArgs 'Installing requirements'
+    $ErrorActionPreference = 'Continue'
+    & $uv @reqArgs
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -eq 0) { return }
+    if ($present) {
+        # Offline, say: what's installed already works, so carry on.
+        Warn "Couldn't check for package updates (exit code $code). Keeping the packages already installed."
+    } else {
+        Fail "Installing requirements failed (exit code $code). Scroll up for details."
+    }
+}
+
+function Torch-Installed {
+    # The version and build of the PyTorch in .venv, like 2.8.0+cu128, or $null.
+    if (-not (Test-Path $py)) { return $null }
+    $ErrorActionPreference = 'Continue'
+    $out = & $py -c "import torch, torchaudio; print('TORCH', torch.__version__, torchaudio.__version__)" 2>$null
+    $ErrorActionPreference = 'Stop'
+    $line = @($out) | Where-Object { "$_" -like 'TORCH *' } | Select-Object -First 1
+    if (-not $line) { return $null }
+    $parts = "$line".Split(' ')
+    if ($parts[1] -ne $parts[2]) { return $null }  # torchaudio must match torch
+    return $parts[1]
 }
 
 if ($reuseCfg) {
@@ -502,10 +561,16 @@ if (-not $reuseCfg) {
         Info 'Already exists, reusing it.'
     }
 
-    Step "Installing PyTorch $TorchVersion ($torchIndex). This is a big download (about 3 GB)."
-    Run $uv @('pip', 'install', '--python', $py,
-        "torch==$TorchVersion", "torchaudio==$TorchVersion",
-        '--index-url', "https://download.pytorch.org/whl/$torchIndex") 'Installing PyTorch'
+    $haveTorch = Torch-Installed
+    if ($haveTorch -eq "$TorchVersion+$torchIndex") {
+        Step "PyTorch $haveTorch is already installed"
+    } else {
+        Step "Installing PyTorch $TorchVersion ($torchIndex). This is a big download (about 3 GB)."
+        if ($haveTorch) { Info "Replacing PyTorch $haveTorch, which isn't the build this PC needs." }
+        Run $uv @('pip', 'install', '--python', $py,
+            "torch==$TorchVersion", "torchaudio==$TorchVersion",
+            '--index-url', "https://download.pytorch.org/whl/$torchIndex") 'Installing PyTorch'
+    }
 
     Install-Requirements @('-c', (Join-Path $Root 'constraints.txt'))
 }
@@ -521,7 +586,7 @@ Run $py $cfgArgs 'Configuring'
 if ($SkipModels) {
     Step 'Skipping model download (-SkipModels). Run install.bat again to download them.'
 } else {
-    Step 'Downloading the Qwen3-TTS models (about 9 GB, resumes if interrupted)'
+    Step 'Getting the Qwen3-TTS models (about 9 GB; models already on this PC are reused, and downloads resume)'
     $dlArgs = @('-m', 'app.download_models')
     if ($AllModels) { $dlArgs += '--all' }
     Run $py $dlArgs 'Downloading models'
@@ -531,7 +596,7 @@ if ($SkipModels) {
 if ($SkipModels -or $SkipGguf) {
     Step 'Skipping KoboldCpp and the GGUF model. They download the first time you pick GGUF.'
 } else {
-    Step 'Downloading KoboldCpp and the GGUF voice model (about 2.3 GB, resumes if interrupted)'
+    Step 'Getting KoboldCpp and the GGUF voice model (about 2.3 GB if they are not here yet)'
     $ErrorActionPreference = 'Continue'
     & $py -m app.gguf
     $code = $LASTEXITCODE
@@ -546,7 +611,7 @@ if ($SkipModels -or $SkipGguf) {
 if ($SkipModels) {
     Step 'Skipping the music remover and speech-to-text models. They download the first time they are needed.'
 } else {
-    Step 'Downloading the music remover and speech-to-text models (about 1.8 GB, resumes if interrupted)'
+    Step 'Getting the music remover and speech-to-text models (about 1.8 GB if they are not here yet)'
     $ErrorActionPreference = 'Continue'
     & $py -m app.youtube --setup
     $code = $LASTEXITCODE

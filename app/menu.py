@@ -26,12 +26,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import HOMEPAGE, RELEASES_URL, __version__
+from . import HOMEPAGE, RELEASES_URL, REPO, __version__
 from .config import OUTPUTS_DIR, ROOT, load_settings
 
 # Exit code that tells Qwen3-TTS.bat to run the installer and then open the menu again.
 INSTALL = 10
-LATEST_RELEASE_API = "https://api.github.com/repos/thinkdude/qwen3-tts-studio/releases/latest"
+LATEST_RELEASE_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 # A program we started counts as "starting" this long while its page isn't up yet.
 STARTING_S = 600
 REFRESH_S = 1.5

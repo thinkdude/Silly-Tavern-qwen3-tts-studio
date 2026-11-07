@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-11-07)
+
+- **Nothing personal in the download.** The license, the guide and the examples no longer name a particular person, drive or PC. As before, everything runs from whichever folder you install to.
+- **Kept that way.** The tests now fail if a Windows user folder or a PC name ever gets into the project.
+
 ## 1.0.0 (2026-11-05)
 
 The first public release.

@@ -19,7 +19,7 @@ Everything (the programs, a private Python, the models and your voices) stays in
 
 ### Install
 
-1. Download **`Qwen3-TTS-Studio-<version>.zip`** from the [latest release](https://github.com/thinkdude/Silly-Tavern-qwen3-tts-studio/releases/latest) (under **Assets**).
+1. Download **`Qwen3-TTS-Studio-<version>.zip`** from the [latest release](../../releases/latest) (under **Assets**).
 2. Right-click the ZIP and choose **Extract All...**.
 3. Open the extracted folder and double-click **`Qwen3-TTS.bat`**. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**.
 4. It asks where to install. Press **Enter** to take the folder it suggests, or type another one, such as `D:\Qwen3TTS`. It shows how much space each drive has free.
@@ -63,7 +63,7 @@ The installer checks what's already there before it downloads anything:
 
 - **Running it again** skips everything that's already installed (Python, PyTorch, the packages and the models), so it's quick. It only looks online for updates, and if there's no internet it keeps what you have.
 - **Models from other AI apps.** If another app on this PC already downloaded one of the models (Qwen3-TTS, Whisper or the GGUF files) through Hugging Face, the installer finds it in the shared Hugging Face cache (usually `C:\Users\<you>\.cache\huggingface`) and links it into the install folder instead of downloading it again. On the same drive the link takes no extra space; on another drive it's copied.
-- **Another Qwen3-TTS Studio folder.** Installing a second copy, or into a new folder, reuses the models and KoboldCpp from your earlier install (found through its shortcut). To point it at a folder yourself, run `install.bat -ModelsFrom "G:\old\Qwen3TTS"`.
+- **Another Qwen3-TTS Studio folder.** Installing a second copy, or into a new folder, reuses the models and KoboldCpp from your earlier install (found through its shortcut). To point it at a folder yourself, run `install.bat -ModelsFrom "D:\Old\Qwen3TTS"`.
 - **Python with PyTorch**, see below.
 
 ### Already have Python with PyTorch?

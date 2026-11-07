@@ -17,7 +17,7 @@ needs_ffmpeg = pytest.mark.skipif(
 )
 
 # What ffmpeg prints about a film with two audio tracks (and chapters), as on Windows.
-FFMPEG_SAYS = r"""Input #0, matroska,webm, from 'G:\Videos\Film.mkv':
+FFMPEG_SAYS = r"""Input #0, matroska,webm, from 'D:\Videos\Film.mkv':
   Metadata:
     title           : The Film
   Duration: 01:42:13.52, start: 0.000000, bitrate: 4812 kb/s
@@ -204,13 +204,13 @@ def test_browse_on_windows_opens_the_file_dialog(monkeypatch, tmp_path):
 
     def run(cmd, **kw):
         ran.update(cmd=cmd, **kw)
-        picked = base64.b64encode("G:\\Vidéos\\Film.mkv".encode()).decode()  # base64, whatever the code page
+        picked = base64.b64encode("D:\\Vidéos\\Film.mkv".encode()).decode()  # base64, whatever the code page
         return subprocess.CompletedProcess(cmd, 0, f"PICKED:{picked}\r\n".encode(), b"")
 
     monkeypatch.setattr(youtube, "WINDOWS", True)
     monkeypatch.setattr(youtube.subprocess, "run", run)
     (tmp_path / "old.mp4").write_bytes(b"")
-    assert youtube.browse(f'"{tmp_path / "old.mp4"}"') == "G:\\Vidéos\\Film.mkv"
+    assert youtube.browse(f'"{tmp_path / "old.mp4"}"') == "D:\\Vidéos\\Film.mkv"
     assert ran["cmd"][:2] == ["powershell.exe", "-NoProfile"]
     script = base64.b64decode(ran["cmd"][-1]).decode("utf-16-le")
     assert "OpenFileDialog" in script and "TopMost" in script and "ToBase64String" in script

@@ -1,4 +1,6 @@
 import importlib.util
+import re
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -46,3 +48,32 @@ def test_changelog_starts_with_the_current_version():
     version = (ROOT / "VERSION").read_text().strip()
     first = next(l for l in (ROOT / "CHANGELOG.md").read_text().splitlines() if l.startswith("## "))
     assert first.split()[1] == version
+
+
+# What would tie the project to one person's PC: a Windows user folder with a real name
+# in it (C:\Users\<you> is fine) or a PC's default name (DESKTOP- or LAPTOP- and a code).
+PERSONAL = re.compile(
+    r"[A-Za-z]:\\+Users\\+(?!<you>|Public\b)\w"
+    r"|\b(?:DESKTOP|LAPTOP)-[A-Z0-9]{6,}\b"
+)
+
+
+def tracked_text_files():
+    out = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+    for name in filter(None, out.decode("utf-8").split("\0")):
+        try:
+            yield name, (ROOT / name).read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue  # binary (the icon) or deleted in the working tree
+
+
+def test_nothing_points_at_one_persons_pc():
+    found = [f"{name}: {m.group(0)}" for name, text in tracked_text_files() for m in PERSONAL.finditer(text)]
+    assert not found, found
+
+
+def test_launchers_only_use_their_own_folder():
+    # Every path in the .bat files is relative to the folder they're in (%~dp0), so the
+    # app works from any drive and folder.
+    for path in ROOT.glob("*.bat"):
+        assert not re.search(r"\b[A-Za-z]:\\", path.read_text(encoding="ascii")), path.name

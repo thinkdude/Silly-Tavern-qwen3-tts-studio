@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import subprocess
 import zipfile
@@ -19,7 +20,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TOP = "Qwen3-TTS-Studio"
-REPO = "thinkdude/Silly-Tavern-qwen3-tts-studio"
+
+
+def _repo(root: Path = ROOT) -> str:
+    """owner/name on GitHub: the repository the Release workflow runs in, else the app's own."""
+    if os.environ.get("GITHUB_REPOSITORY"):
+        return os.environ["GITHUB_REPOSITORY"]
+    m = re.search(r'^REPO = "([^"]+)"', (root / "app" / "__init__.py").read_text(encoding="utf-8"), re.M)
+    return m.group(1) if m else ""
+
+
+REPO = _repo()
 # Files in the repo that aren't needed to install or run.
 LEAVE_OUT = ("tests/", ".github/", ".gitignore", ".gitattributes", "scripts/build_release.py")
 WINDOWS_LINE_ENDINGS = (".bat", ".cmd", ".ps1")

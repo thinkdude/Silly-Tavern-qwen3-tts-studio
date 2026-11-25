@@ -53,7 +53,7 @@ To start one program directly, without the menu (for a shortcut of your own, say
 
 ### Updating
 
-When a new version is out, the menu says so. Download the new ZIP, extract it, double-click `Qwen3-TTS.bat` in it, and press **Enter** when it offers to update your existing install. Your voices, settings and downloaded models are kept. (It finds your install through its shortcut; if you didn't add one, type your install folder.)
+When a new version is out, the menu says so. Close the menu and the programs it started, download the new ZIP, extract it, double-click `Qwen3-TTS.bat` in it, and press **Enter** when it offers to update your existing install. Your voices, settings and downloaded models are kept. (It finds your install through its shortcut; if you didn't add one, type your install folder.)
 
 Already using a copy from before the menu existed (or a `git clone`)? Extract the new ZIP over it, or `git pull`, then run `install.bat`.
 

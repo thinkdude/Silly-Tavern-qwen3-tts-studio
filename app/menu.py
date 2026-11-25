@@ -125,7 +125,9 @@ def start_program(program: Program) -> subprocess.Popen:
     """Run the program in a window of its own, so this menu stays usable."""
     if os.name == "nt":
         return subprocess.Popen(
-            ["cmd.exe", "/c", LAUNCHER, program.word], cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE
+            # .\ so cmd doesn't have to search for it (it won't search this folder when
+            # NoDefaultCurrentDirectoryInExePath is set).
+            ["cmd.exe", "/c", ".\\" + LAUNCHER, program.word], cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE
         )
     return subprocess.Popen([sys.executable, "-m", program.module], cwd=ROOT, start_new_session=True)
 
@@ -226,8 +228,8 @@ class Menu:
         elif key == "u" and self.update:
             webbrowser.open(RELEASES_URL)
             self.message = (
-                "Opened the download page. Download the ZIP, extract it, run Qwen3-TTS.bat from it "
-                "and press Enter to update this copy."
+                "Opened the download page. Close this menu and the programs it started, then download the ZIP, "
+                "extract it, run Qwen3-TTS.bat from it and press Enter to update this copy."
             )
         elif key in ("q", "\x1b"):
             return 0

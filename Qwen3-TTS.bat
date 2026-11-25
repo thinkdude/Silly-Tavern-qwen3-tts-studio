@@ -17,7 +17,14 @@ if exist "%~dp0.installed-to.txt" goto :moved
 if not exist "%~dp0.venv\Scripts\python.exe" goto :install
 if not "%~1"=="" goto :program
 
-"%~dp0.venv\Scripts\python.exe" -m app.menu
+rem Each program runs inside a ( ) block, which cmd reads in full before running it, so an
+rem update that replaces this file meanwhile can't make cmd carry on in the middle of a line.
+(
+    "%~dp0.venv\Scripts\python.exe" -m app.menu
+    goto :menu_closed
+)
+
+:menu_closed
 set "CODE=%ERRORLEVEL%"
 if "%CODE%"=="10" goto :install
 if "%CODE%"=="0" exit /b 0
@@ -30,7 +37,12 @@ exit /b %CODE%
 
 :program
 rem One program in this window. The menu starts each one like this, in a window of its own.
-"%~dp0.venv\Scripts\python.exe" -m app.menu %*
+(
+    "%~dp0.venv\Scripts\python.exe" -m app.menu %*
+    goto :program_closed
+)
+
+:program_closed
 set "CODE=%ERRORLEVEL%"
 echo.
 pause
@@ -42,7 +54,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install.ps1"
 set "CODE=%ERRORLEVEL%"
 echo.
 if not "%CODE%"=="0" goto :install_failed
-echo   Press any key to open the menu.
+echo   Press any key to continue.
 pause >nul
 goto :begin
 

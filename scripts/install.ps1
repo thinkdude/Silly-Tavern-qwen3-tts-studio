@@ -174,9 +174,18 @@ function Write-Marker([string]$dest) {
 function Remove-OldLaunchers([string]$dir) {
     # Up to 1.0.2 each program had a start_*.bat of its own. Qwen3-TTS.bat starts them all
     # now (Qwen3-TTS.bat studio, server or speak starts one directly), so updating removes them.
+    $removed = $false
     foreach ($name in 'start_studio.bat', 'start_server.bat', 'start_speak.bat') {
         $old = Join-Path $dir $name
-        if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
+        if (Test-Path -LiteralPath $old) {
+            Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+            $removed = $true
+        }
+    }
+    if ($removed) {
+        # A menu from before still has the old start files in mind.
+        Warn 'If the Qwen3-TTS menu or one of its programs is still open from before this update,'
+        Warn 'close its window, then open Qwen3-TTS.bat again.'
     }
 }
 function Copy-AppTo([string]$dest) {

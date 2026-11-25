@@ -146,7 +146,7 @@ def test_menu_starts_each_program_through_the_launcher(monkeypatch):
     args, kw = calls[0]
     assert kw["cwd"] == menu.ROOT
     if menu.os.name == "nt":
-        assert args == ["cmd.exe", "/c", "Qwen3-TTS.bat", "server"]
+        assert args == ["cmd.exe", "/c", ".\\Qwen3-TTS.bat", "server"]
         assert (menu.ROOT / args[2]).is_file()
     else:
         assert args[1:] == ["-m", "app.server"]

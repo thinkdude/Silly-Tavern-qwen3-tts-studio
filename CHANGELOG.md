@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2 (2026-11-25)
+
+- **SillyTavern set up for you.** On the Voice Server's **Connect SillyTavern** tab, pick SillyTavern's folder (it's usually found for you) and click **Fill in SillyTavern's settings**. That turns on SillyTavern's text-to-speech, points it at the Voice Server and fills in your voices, so there's nothing to copy. A copy of SillyTavern's old settings is kept, and if SillyTavern is open you're reminded to reload its page.
+- **New voices show up by themselves.** The Voice Server keeps SillyTavern's voice list up to date as you save or delete voices in the Studio (a tick box turns this off).
+- **Long replies start speaking sooner.** Fill in also turns on SillyTavern's "Narrate by paragraphs" options, so each paragraph is made and played on its own and the first one plays while the next is being made, instead of waiting for the whole reply.
+
 ## 1.0.1 (2026-11-07)
 
 - **Nothing personal in the download.** The license, the guide and the examples no longer name a particular person, drive or PC. As before, everything runs from whichever folder you install to.

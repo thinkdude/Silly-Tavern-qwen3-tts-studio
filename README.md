@@ -176,16 +176,31 @@ To start the server on one model without opening the panel, run `start_server.ba
 
 ### SillyTavern
 
+The control panel fills in SillyTavern's settings for you:
+
 1. Start the Voice Server (press **2** in the menu).
-2. In SillyTavern open **Extensions** (the stacked blocks icon) → **TTS**.
-3. Set **Select TTS Provider** to **OpenAI Compatible** and tick **Enabled**.
-4. Fill in the fields from the control panel's **Connect SillyTavern** tab:
+2. On the control panel's **Connect SillyTavern** tab, check the **SillyTavern folder** (the one with `Start.bat` in it, e.g. `D:\SillyTavern`). The panel looks for it in the usual places; if it didn't find it, click **Browse…** and pick it.
+3. Click **Fill in SillyTavern's settings**. That turns on SillyTavern's TTS, picks **OpenAI Compatible**, points it at the voice server and fills in your voices.
+4. If SillyTavern is open in your browser, reload its page (**F5**).
+5. In SillyTavern open **Extensions** (the stacked blocks icon) → **TTS** and pick a voice for each character in the list at the bottom.
+
+**New voices show up by themselves.** With **Keep SillyTavern's voice list up to date** ticked, the server updates SillyTavern's list when you save or delete a voice in the Studio. Reload SillyTavern's page to see a new one. Renaming a voice keeps its id, so SillyTavern keeps working.
+
+**Long replies start sooner.** With **Speak long replies a paragraph at a time** ticked, SillyTavern sends each paragraph on its own (its two **Narrate by paragraphs** options), so the first paragraph plays while the next one is being made, instead of waiting for the whole reply. With streaming on, it even starts while the reply is still being written. A long paragraph is still made in one go, so the wait for each paragraph depends on its length and on the voice model (the **Compare** button shows how long each model takes on your PC).
+
+What Fill in changes: only the TTS part of SillyTavern's `data\<user>\settings.json` (or `public\settings.json` on SillyTavern older than 1.12), for every user profile. Before each change it keeps a copy of the file as `settings.json.qwen3-tts-backup` next to it. SillyTavern's own settings page writes the whole file back when you change something there, so reload its page after Fill in, or it may put the old settings back (then click Fill in again). No API key is copied: if you set `api_key`, enter it in SillyTavern yourself. From a command window you can do the same with `.venv\Scripts\python -m app.sillytavern "D:\SillyTavern"`.
+
+<details><summary>Or fill it in by hand</summary>
+
+1. In SillyTavern open **Extensions** → **TTS**, set **Select TTS Provider** to **OpenAI Compatible** and tick **Enabled**.
+2. Fill in the fields from the **Or copy the settings in by hand** section of the control panel's **Connect SillyTavern** tab:
    - **Provider Endpoint:** `http://127.0.0.1:8890/v1/audio/speech`
    - **Model:** `qwen3-tts`
    - **Available Voices:** your voice ids separated by commas, e.g. `grumpy-wizard,dad`
-5. Click **Reload**, then pick a voice for each character in the voice map below.
+3. Click **Reload**, then pick a voice for each character in the voice map below.
+4. For long replies, tick **Narrate by paragraphs (when streaming)** and **Narrate by paragraphs (when not streaming)**.
 
-After making new voices in the Studio, click **Refresh** in the control panel and paste the updated voice list into SillyTavern. Renaming a voice keeps its id, so SillyTavern keeps working.
+</details>
 
 SillyTavern itself uses port 8000, which is why the voice server uses 8890.
 
@@ -239,6 +254,9 @@ client.audio.speech.create(model="qwen3-tts", voice="grumpy-wizard", input="Hell
 | `server_port`, `studio_port`, `speak_port` | 8890, 7860, 7861 | Ports |
 | `server_host` | `127.0.0.1` | Use `0.0.0.0` to allow other PCs on your network |
 | `api_key` | empty | When set, apps must send it as a Bearer token (put it in SillyTavern's API key field) |
+| `sillytavern_dir` | empty | SillyTavern's folder, saved by the control panel's **Fill in SillyTavern's settings** button |
+| `sillytavern_auto_sync` | `true` | Update SillyTavern's voice list when voices are saved or deleted |
+| `sillytavern_paragraphs` | `true` | Have SillyTavern speak long replies a paragraph at a time |
 | `koboldcpp_export` | on | Copy saved voices into the KoboldCpp voices folder |
 | `koboldcpp_voices_dir` | `koboldcpp_voices` | That folder (relative to the install folder, or a full path) |
 | `koboldcpp_url` | `http://127.0.0.1:5001` | Where your KoboldCpp runs, for the settings shown in the Studio. Speak uses it too when it has the voice loaded |
@@ -261,6 +279,7 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 - **Installer says the GPU was found but PyTorch can't use it**: update your NVIDIA driver from nvidia.com, then run `install.bat` again.
 - **Takes come out silent, or "The model produced silence"**: your graphics card doesn't handle the current precision well (most likely on GTX 10/16 or RTX 20 series cards). On the Studio's **System** tab set **Precision** to `float32` and click **Apply**. It needs about twice the GPU memory; if that runs out, try `bfloat16`, or switch to the 0.6B clone model.
 - **SillyTavern says the TTS request failed**: make sure the server window is open, the endpoint ends in `/v1/audio/speech`, and the voice id is in the control panel's list. The **Request log** tab shows what arrived.
+- **SillyTavern still shows the old voices after Fill in**: reload SillyTavern's page (F5). If a change you made in SillyTavern before reloading put the old list back, click **Fill in SillyTavern's settings** again and reload right away.
 - **Clone sounds off**: use a cleaner 5 to 15 second clip and make sure the transcript matches word for word.
 - **The GGUF model doesn't start or says KoboldCpp couldn't say that** (in Speak or the Voice Server): KoboldCpp's messages are in `.cache\koboldcpp-gguf.log`. If it mentions CUDA, update your NVIDIA driver. You can always switch back to the full model.
 - **A port is already in use**: change `studio_port`, `server_port`, `speak_port` or `gguf_port` in `settings.json`.

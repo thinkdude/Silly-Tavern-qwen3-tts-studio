@@ -84,6 +84,12 @@ DEFAULTS: dict[str, Any] = {
     "gguf_port": 5002,
     # Optional. When set, API clients must send "Authorization: Bearer <key>".
     "api_key": "",
+    # SillyTavern's folder, set by the voice server's "Fill in SillyTavern's settings" button.
+    "sillytavern_dir": "",
+    # Keep SillyTavern's voice list up to date when voices are saved or deleted.
+    "sillytavern_auto_sync": True,
+    # Have SillyTavern send long replies a paragraph at a time ("Narrate by paragraphs").
+    "sillytavern_paragraphs": True,
     "default_language": "Auto",
     # Saved voices are copied here for KoboldCpp ("TTS Voices Dir"). Relative to the install folder.
     "koboldcpp_export": True,

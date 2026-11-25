@@ -261,6 +261,26 @@ def current_voices(path: Path) -> list[str] | None:
     return [str(v).strip() for v in voices if str(v).strip()] if isinstance(voices, list) else None
 
 
+# SillyTavern's multi-voice keys: 'Seraphina ("Quotes")', 'Seraphina (*Text inside asterisks*)', ...
+_MULTI_VOICE_KEY = re.compile(r'^(?P<name>.+) \((?P<part>"Quotes"|\*Text inside asterisks\*|Other text)\)$')
+
+
+def _plain_voices(section: dict) -> None:
+    """Give each character that only has multi-voice voices a voice of its own, which
+    SillyTavern needs once multi-voice is off: its narration voice (Other text) first."""
+    vmap = section.get("voiceMap")
+    if not isinstance(vmap, dict):
+        return
+    best: dict[str, tuple[int, str]] = {}
+    rank = {"Other text": 0, '"Quotes"': 1, "*Text inside asterisks*": 2}
+    for key, voice in vmap.items():
+        m = _MULTI_VOICE_KEY.match(str(key))
+        if m and voice and (m["name"] not in best or rank[m["part"]] < best[m["name"]][0]):
+            best[m["name"]] = (rank[m["part"]], voice)
+    for name, (_, voice) in best.items():
+        vmap.setdefault(name, voice)
+
+
 def apply(
     root: Path,
     voices: list[str],
@@ -268,12 +288,16 @@ def apply(
     endpoint: str | None = None,
     model: str = MODEL_NAME,
     paragraphs: bool | None = None,
+    per_person: bool | None = None,
 ) -> Result:
     """Update SillyTavern's settings files.
 
     With an endpoint (the Fill in button): turn TTS on, pick the OpenAI Compatible provider,
     point it at the voice server and fill in the voices, and set both "Narrate by paragraphs"
-    options to `paragraphs` (when given).
+    options to `paragraphs` (when given). With `per_person`, turn off SillyTavern's own multi-voice,
+    which would send quotes and narration as separate pieces: the voice server then gets whole
+    paragraphs, works out who says each line itself, and reads narration in the character's
+    voice (taken from that character's multi-voice "Other text" voice when it has no plain one).
     Without one (keeping the list up to date): only the voice list, and only where the
     OpenAI Compatible provider is already set up.
     A file is written (with a backup) only when something in it actually changes.
@@ -300,6 +324,9 @@ def apply(
                 section = tts[PROVIDER] = {}
             section["provider_endpoint"] = endpoint
             section["model"] = model
+            if per_person:
+                tts["multi_voice_enabled"] = False
+                _plain_voices(section)
         if not isinstance(section, dict):
             result.skipped.append(path)
             continue
@@ -475,7 +502,8 @@ def main(argv: list[str] | None = None) -> int:
         root = find_install(folder)
         voices = VoiceLibrary().ids()
         result = apply(
-            root, voices, endpoint=f"http://127.0.0.1:{port_}/v1/audio/speech", paragraphs=not args.no_paragraphs
+            root, voices, endpoint=f"http://127.0.0.1:{port_}/v1/audio/speech", paragraphs=not args.no_paragraphs,
+            per_person=bool(settings.get("voices_per_person", True)),
         )
     except (SillyTavernError, OSError) as exc:
         print(f"!! {exc}")

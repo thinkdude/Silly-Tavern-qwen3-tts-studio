@@ -204,6 +204,16 @@ What Fill in changes: only the TTS part of SillyTavern's `data\<user>\settings.j
 
 SillyTavern itself uses port 8000, which is why the voice server uses 8890.
 
+### Each person in their own voice
+
+When a reply has several people talking, the server reads each of them in a voice of their own. Narration is read in the voice SillyTavern picks for the character. Who says a line comes from the name next to it (`"Hi," Jake says` or `Jake says, "Hi"`), a `Name:` in front of it, or the colour it's written in (`<cyan>"Hi"</cyan>`), once that colour has been seen with a name. The first time someone speaks they get one of your voices that nobody else is using yet, and they keep it. On the control panel's **People's voices** tab you can see who has been heard and pick each person's voice (or untick **Read each person in their own voice** to read everything in one voice).
+
+This needs whole paragraphs, so **Fill in SillyTavern's settings** turns off SillyTavern's own **Multi-voice** option (which sends quotes and narration as separate pieces) and gives each character a narration voice if it only had multi-voice ones.
+
+### What isn't read
+
+Many role-play cards put notes in their replies: a reasoning list at the top, a `[ time | place ]` status line, and blocks of game state such as `<internal_states>` or `<details>`. With **Skip notes and hidden blocks** ticked (the default), the server reads only the story. It skips `<internal_states>`, `<details>`, `<think>` and `<!-- -->` blocks (however many paragraphs they span), `# headings`, lists, tables, `[ status | lines ]` and code blocks. Your chats are left as they are: this only changes what's read out.
+
 ### Other apps
 
 Any app that can use OpenAI's text-to-speech with a custom base URL works. Point it at `http://127.0.0.1:8890/v1` and use a voice id as the voice name.

@@ -8,6 +8,10 @@ with a small control panel.
 The control panel can fill in SillyTavern's TTS settings by itself (see sillytavern.py) and
 keep its voice list up to date as voices are saved or deleted.
 
+Replies are read the way a person would (see speakers.py): notes such as internal states,
+reasoning and status lines are skipped, narration is read in the voice asked for, and each
+person who talks gets a voice of their own.
+
 It speaks with either voice model, picked with the control panel's switch:
   * full: Qwen3-TTS itself (best quality).
   * gguf: the small GGUF model, run by KoboldCpp (see gguf.py).
@@ -32,7 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
-from . import audio, gguf, sillytavern
+from . import audio, gguf, sillytavern, speakers
 from .config import load_settings, save_settings, setup_environment
 from .engine import OutOfMemory, TTSEngine
 from .voices import Voice, VoiceLibrary
@@ -120,11 +124,29 @@ class Backend:
         return info
 
 
-def create_app(engine: TTSEngine, library: VoiceLibrary, settings: dict, kobold: gguf.KoboldTTS | None = None) -> FastAPI:
+def remember(changes: dict) -> None:
+    """Save these settings to settings.json, keeping any other edits made to the file meanwhile."""
+    saved = load_settings()
+    saved.update(changes)
+    save_settings(saved)
+
+
+def create_app(
+    engine: TTSEngine,
+    library: VoiceLibrary,
+    settings: dict,
+    kobold: gguf.KoboldTTS | None = None,
+    save_people=None,
+) -> FastAPI:
+    """The API. save_people(changes) keeps who speaks with which voice (main() saves it in
+    settings.json; left out, it lasts as long as the app)."""
     app = FastAPI(title="Qwen3-TTS voice server", docs_url="/docs", redoc_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     app.state.log = deque(maxlen=50)
     backend = app.state.backend = Backend(engine, settings, kobold)
+    people = app.state.people = speakers.PeopleVoices(settings, library.ids, save_people)
+    # SillyTavern sends a reply a paragraph at a time, so this one remembers an open block of notes.
+    reader = app.state.reader = speakers.Reader(settings, library, people)
     app.state.st_sync = sillytavern.AutoSync(settings, library)
 
     def check_key(authorization: str | None = Header(default=None)):
@@ -172,8 +194,15 @@ def create_app(engine: TTSEngine, library: VoiceLibrary, settings: dict, kobold:
             raise HTTPException(404, f"No saved voice called '{req.voice}'. Available: {', '.join(library.ids()) or 'none yet'}.")
         if not req.input.strip():
             raise HTTPException(400, "The input text is empty.")
+        speed = min(max(req.speed, 0.25), 4.0)
+        status = "ok"
         try:
-            wav, sr = backend.speak(req.input, v, language=req.language, speed=min(max(req.speed, 0.25), 4.0), model=model)
+            read = reader.read(req.input, v, lambda words, who: backend.speak(words, who, language=req.language, speed=speed, model=model))
+            if read is None:  # only notes: a moment of silence, so the app just moves on
+                wav, sr = speakers.silence()
+                status = "skipped (notes)"
+            else:
+                wav, sr = read
             data, media_type = audio.encode(wav, sr, fmt)
         except OutOfMemory as exc:
             record(v.id, len(req.input), started, "out of GPU memory", model)
@@ -185,7 +214,7 @@ def create_app(engine: TTSEngine, library: VoiceLibrary, settings: dict, kobold:
             traceback.print_exc()
             record(v.id, len(req.input), started, f"error: {exc}", model)
             raise HTTPException(500, f"Generation failed: {exc}")
-        record(v.id, len(req.input), started, "ok", model)
+        record(v.id, len(req.input), started, status, model)
         return Response(content=data, media_type=media_type)
 
     return app
@@ -225,8 +254,12 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
         mem = f" ({s['vram_used_gb']} / {s['vram_total_gb']} GB VRAM used)" if "vram_total_gb" in s else ""
         return f"**Server:** {base_url}  \n**GPU:** {gpu}{mem}  \n**Voice model:** {model_md(s)}  \n**Voices:** {len(library.list())}"
 
+    people: speakers.PeopleVoices = app.state.people
+    # The Test tab reads with its own note filter, so it never shares an open block with SillyTavern's requests.
+    test_reader = speakers.Reader(settings, library, people, speakers.NoteFilter())
+
     def refresh():
-        return status_md(), st_voices(), voice_table(), list(app.state.log)
+        return status_md(), st_voices(), voice_table(), list(app.state.log), people.table()
 
     st_sync: sillytavern.AutoSync = app.state.st_sync
 
@@ -315,6 +348,38 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
                     "Provider Endpoint). Fill in doesn't copy keys."
                 )
 
+        with gr.Tab("People's voices"):
+            gr.Markdown(
+                "Narration is read in the voice the app asks for (in SillyTavern, the character's voice). "
+                "When someone talks, their lines get a voice of their own: the one you pick below, or one "
+                "handed out the first time they speak. Who's talking comes from the name next to the line "
+                '("Hi," Jake says), a "Name:" in front of it, or the colour it\'s written in.'
+            )
+            pv_on = gr.Checkbox(
+                bool(settings.get("voices_per_person", True)),
+                label="Read each person in their own voice",
+                info="Off: everything is read in the voice the app asks for.",
+            )
+            notes_on = gr.Checkbox(
+                bool(settings.get("skip_notes", True)),
+                label="Skip notes and hidden blocks",
+                info="Doesn't read what isn't the story: <internal_states>, <details>, <think> and <!-- --> blocks, "
+                "# headings, lists, [ status | lines ] and code blocks.",
+            )
+            people_table = gr.Dataframe(
+                people.table(), headers=["person", "voice", "dialogue colour"], interactive=False, label="People heard so far"
+            )
+            with gr.Row(equal_height=True):
+                pv_person = gr.Dropdown(
+                    [row[0] for row in people.table()], label="Person", allow_custom_value=True, scale=2,
+                    info="Pick someone from the list, or type a name before they've spoken.",
+                )
+                pv_voice = gr.Dropdown(library.ids(), label="Voice", scale=2)
+                pv_set = gr.Button("Use this voice", variant="primary", scale=1)
+            with gr.Row():
+                pv_forget = gr.Button("Forget everyone")
+            pv_note = gr.Markdown()
+
         with gr.Tab("Voices"):
             table = gr.Dataframe(voice_table(), headers=["id (use this in apps)", "name", "type", "language"], interactive=False)
 
@@ -352,9 +417,12 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
         def test(voice_id, lang, text):
             v = pick(voice_id, text)
             started = time.time()
-            wav, sr = backend.speak(text, v, language=None if lang == VOICE_DEFAULT_LANG else lang)
+            language = None if lang == VOICE_DEFAULT_LANG else lang
+            read = test_reader.read(text, v, lambda words, who: backend.speak(words, who, language=language))
+            if read is None:
+                raise ValueError("That's all notes, so there's nothing to read (Skip notes and hidden blocks is on).")
             app.state.record(v.id, len(text), started, "ok (test tab)")
-            return _for_player(wav, sr)
+            return _for_player(*read)
 
         @friendly
         def compare(voice_id, lang, text, progress=gr.Progress(track_tqdm=True)):
@@ -408,7 +476,10 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
         def st_fill_in(folder, paragraphs, auto):
             root = sillytavern.find_install(folder)
             ids = library.ids()
-            result = sillytavern.apply(root, ids, endpoint=f"{base_url}/v1/audio/speech", paragraphs=paragraphs)
+            result = sillytavern.apply(
+                root, ids, endpoint=f"{base_url}/v1/audio/speech", paragraphs=paragraphs,
+                per_person=bool(settings.get("voices_per_person", True)),
+            )
             # Remember it all, keeping any other edits made to settings.json meanwhile.
             changes = {"sillytavern_dir": str(root), "sillytavern_paragraphs": bool(paragraphs), "sillytavern_auto_sync": bool(auto)}
             settings.update(changes)
@@ -417,6 +488,36 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
             save_settings(saved)
             st_sync.note = ""
             return str(root), sillytavern.describe(result, ids)
+
+        def person_key(label: str) -> str:
+            label = (label or "").strip()
+            if label.startswith("(someone in ") and label.endswith(")"):
+                return "colour:" + label[len("(someone in ") : -1]
+            return label
+
+        def people_choices():
+            return gr.update(choices=[row[0] for row in people.table()])
+
+        @friendly
+        def pv_use(person, voice):
+            key = person_key(person)
+            if not key:
+                raise ValueError("Pick or type a person first.")
+            if library.get(voice or "") is None:
+                raise ValueError("Pick a voice for them first.")
+            people.set(key, library.get(voice).id)
+            return people.table(), people_choices(), f"{person} now speaks with {library.get(voice).id}."
+
+        def pv_forget_all():
+            people.forget()
+            return people.table(), people_choices(), "Forgotten. Each person gets a voice again the next time they speak."
+
+        def setting_changed(key):
+            def changed(value):
+                settings[key] = bool(value)
+                remember({key: bool(value)})
+
+            return changed
 
         def st_auto_changed(auto):
             if settings.get("sillytavern_dir"):  # before the first Fill in, the button saves it
@@ -429,13 +530,21 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
         st_browse.click(st_pick, [st_dir], [st_dir], concurrency_limit=None)
         st_fill.click(st_fill_in, [st_dir, st_paragraphs, st_auto], [st_dir, st_note])
         st_auto.input(st_auto_changed, [st_auto], None)
+        pv_on.input(setting_changed("voices_per_person"), [pv_on], None)
+        notes_on.input(setting_changed("skip_notes"), [notes_on], None)
+        pv_set.click(pv_use, [pv_person, pv_voice], [people_table, pv_person, pv_note])
+        pv_forget.click(pv_forget_all, None, [people_table, pv_person, pv_note])
 
-        outputs = [status, st_box, table, log]
+        outputs = [status, st_box, table, log, people_table]
         # Afterwards, show the model actually in use (it stays the same when switching failed).
         model.input(switch_model, [model], [model_note]).then(lambda: gr.update(value=backend.choice), None, model).then(
             refresh, None, outputs
         )
-        refresh_btn.click(refresh, None, outputs).then(lambda: gr.update(choices=library.ids()), None, t_voice)
+        refresh_btn.click(refresh, None, outputs).then(
+            lambda: (gr.update(choices=library.ids()), gr.update(choices=library.ids()), people_choices()),
+            None,
+            [t_voice, pv_voice, pv_person],
+        )
         load_btn.click(friendly(lambda: backend.preload()), None, None).then(refresh, None, outputs)
         unload_btn.click(lambda: backend.free(), None, None).then(refresh, None, outputs)
         panel.load(lambda: gr.update(value=backend.choice), None, model)
@@ -469,7 +578,7 @@ def main() -> None:
 
     engine = TTSEngine(settings, idle_unload_minutes=settings.get("server_idle_unload_minutes", 0))
     library = VoiceLibrary()
-    api = create_app(engine, library, settings, gguf.KoboldTTS(settings, library))
+    api = create_app(engine, library, settings, gguf.KoboldTTS(settings, library), save_people=remember)
     backend: Backend = api.state.backend
     app = gr.mount_gradio_app(api, build_panel(library, settings, api, base_url), path="/ui")
 

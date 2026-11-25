@@ -99,6 +99,12 @@ DEFAULTS: dict[str, Any] = {
     "stt_model": "openai/whisper-large-v3-turbo",
     # The menu (Qwen3-TTS.bat) asks GitHub whether a newer version is out.
     "check_for_updates": True,
+    # The voice server: read each person who talks in a voice of their own (speakers.py).
+    # Who gets which voice is kept in people_voices, and each person's dialogue colour in
+    # people_colours; both are filled in as people speak, and the control panel edits them.
+    "voices_per_person": True,
+    # The voice server: don't read notes (internal states, reasoning, status lines, <details>).
+    "skip_notes": True,
     "gpu_name": "",
     "vram_gb": 0.0,
 }

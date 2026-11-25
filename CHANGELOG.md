@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.4 (2026-11-25)
+
+- **Each person in their own voice.** When several people talk in one reply, the Voice Server reads each of them in a voice of their own, and narration in the character's voice. It works out who's talking from the name next to a line, a "Name:" in front of it, or the colour it's written in. Everyone gets a voice the first time they speak and keeps it; pick voices yourself on the new **People's voices** tab. Fill in SillyTavern's settings turns off SillyTavern's own Multi-voice option, which would split the lines up first.
+- **Notes aren't read out.** Reasoning lists, `[ time | place ]` status lines and blocks such as `<internal_states>`, `<details>` and `<think>` are skipped, even when SillyTavern sends a reply a paragraph at a time. Markup like `<cyan>` is never read out either.
+
 ## 1.0.3 (2026-11-25)
 
 - **One file starts everything.** `start_studio.bat`, `start_server.bat` and `start_speak.bat` are gone. Double-click `Qwen3-TTS.bat` and it asks which program to start. To start one directly (for a shortcut of your own), run `Qwen3-TTS.bat studio`, `Qwen3-TTS.bat server` or `Qwen3-TTS.bat speak`; `Qwen3-TTS.bat server --engine gguf` works as before. Updating removes the old start files.

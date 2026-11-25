@@ -37,9 +37,6 @@ WINDOWS_LINE_ENDINGS = (".bat", ".cmd", ".ps1")
 REQUIRED = (
     "Qwen3-TTS.bat",
     "install.bat",
-    "start_studio.bat",
-    "start_server.bat",
-    "start_speak.bat",
     "scripts/install.ps1",
     "scripts/probe_python.py",
     "app/menu.py",

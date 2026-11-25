@@ -128,3 +128,68 @@ def test_is_listening():
         port = srv.getsockname()[1]
         assert menu.is_listening("127.0.0.1", port)
     assert not menu.is_listening("127.0.0.1", port)
+
+
+def test_programs_by_name():
+    assert [p.word for p in menu.PROGRAMS] == ["studio", "server", "speak"]
+    assert menu.find_program("server").module == "app.server"
+    assert menu.find_program(" Studio ").name == "Voice Studio"
+    assert menu.find_program("3").name == "Speak"
+    assert menu.find_program("nothing") is None
+    assert menu.find_program("") is None
+
+
+def test_menu_starts_each_program_through_the_launcher(monkeypatch):
+    calls = []
+    monkeypatch.setattr(menu.subprocess, "Popen", lambda args, **kw: calls.append((args, kw)) or FakeProc())
+    menu.start_program(menu.PROGRAMS[1])
+    args, kw = calls[0]
+    assert kw["cwd"] == menu.ROOT
+    if menu.os.name == "nt":
+        assert args == ["cmd.exe", "/c", "Qwen3-TTS.bat", "server"]
+        assert (menu.ROOT / args[2]).is_file()
+    else:
+        assert args[1:] == ["-m", "app.server"]
+
+
+def test_a_name_runs_that_program_with_its_options(monkeypatch):
+    ran = []
+    monkeypatch.setattr(menu, "run", lambda program, args: ran.append((program.word, args)) or 0)
+    monkeypatch.setattr(menu, "Menu", lambda: pytest.fail("the menu shouldn't open"))
+    assert menu.main(["server", "--engine", "gguf"]) == 0
+    assert menu.main(["speak"]) == 0
+    assert ran == [("server", ["--engine", "gguf"]), ("speak", [])]
+
+
+def test_an_unknown_name_lists_the_choices(capsys):
+    assert menu.main(["nothing"]) == 2
+    out = capsys.readouterr().out
+    assert "'nothing'" in out
+    for word in ("studio", "server", "speak"):
+        assert f"Qwen3-TTS.bat {word}" in out
+
+
+def test_run_hands_over_the_options_and_the_exit_code(monkeypatch):
+    import runpy
+
+    seen = []
+
+    def fake_run_module(name, run_name, alter_sys):
+        seen.append((name, run_name, list(menu.sys.argv)))
+        raise SystemExit(3)
+
+    monkeypatch.setattr(runpy, "run_module", fake_run_module)
+    monkeypatch.setattr(menu.sys, "argv", ["menu"])
+    monkeypatch.setattr(menu, "set_title", lambda title: seen.append(title))
+    assert menu.run(menu.PROGRAMS[1], ["--engine", "gguf"]) == 3
+    assert seen == ["Qwen3-TTS Voice Server", ("app.server", "__main__", ["app.server", "--engine", "gguf"])]
+
+    monkeypatch.setattr(runpy, "run_module", lambda *a, **k: None)
+    assert menu.run(menu.PROGRAMS[0], []) == 0
+
+
+def test_one_start_file():
+    # Qwen3-TTS.bat is the only way in: the menu, or one program by name.
+    assert not list(menu.ROOT.glob("start_*.bat"))
+    bat = (menu.ROOT / "Qwen3-TTS.bat").read_text(encoding="ascii")
+    assert "-m app.menu %*" in bat

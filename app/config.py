@@ -68,9 +68,9 @@ DEFAULTS: dict[str, Any] = {
     "server_port": 8890,
     "server_idle_unload_minutes": 0,
     # The voice server's model: "full" (clone_model) or "gguf" (KoboldCpp with the GGUF files
-    # below). The switch in its control panel sets it; start_server.bat --engine overrides it.
+    # below). The switch in its control panel sets it; Qwen3-TTS.bat server --engine overrides it.
     "server_engine": "full",
-    # The type-and-speak app (start_speak.bat).
+    # The type-and-speak app (Speak).
     "speak_port": 7861,
     "speak_idle_unload_minutes": 10,
     # "full" (clone_model above) or "gguf" (KoboldCpp with the GGUF files below). Speak's switch sets it.

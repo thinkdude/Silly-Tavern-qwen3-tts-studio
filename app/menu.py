@@ -1,12 +1,17 @@
 """The Qwen3-TTS Studio menu, opened by Qwen3-TTS.bat.
 
-It starts the Voice Studio, the voice server and Speak, each in its own window,
+It asks which program to start (the Voice Studio, the voice server or Speak),
+starts each in its own window,
 shows which ones are running, and opens a running one's page in the browser
 instead of starting a second copy. Installing and updating are left to
 Qwen3-TTS.bat (this exits with INSTALL), because the installer can't replace
 .venv while this Python runs from it.
 
 Only light modules are imported here so the menu opens instantly.
+
+    python -m app.menu                   the menu
+    python -m app.menu server [options]  one program in this window, with its own
+                                         options (Qwen3-TTS.bat server does this)
 """
 
 from __future__ import annotations
@@ -32,6 +37,8 @@ from .config import OUTPUTS_DIR, ROOT, load_settings
 # Exit code that tells Qwen3-TTS.bat to run the installer and then open the menu again.
 INSTALL = 10
 LATEST_RELEASE_API = f"https://api.github.com/repos/{REPO}/releases/latest"
+# Starts the menu, or one program: Qwen3-TTS.bat studio, server or speak.
+LAUNCHER = "Qwen3-TTS.bat"
 # A program we started counts as "starting" this long while its page isn't up yet.
 STARTING_S = 600
 REFRESH_S = 1.5
@@ -42,7 +49,7 @@ class Program:
     key: str
     name: str
     about: str
-    bat: str
+    word: str  # Qwen3-TTS.bat <word> starts it
     module: str
     port_setting: str
     default_port: int
@@ -51,12 +58,18 @@ class Program:
 
 PROGRAMS = (
     Program("1", "Voice Studio", "make voices: describe one, or clone one from a clip",
-            "start_studio.bat", "app.studio", "studio_port", 7860),
+            "studio", "app.studio", "studio_port", 7860),
     Program("2", "Voice Server", "lets SillyTavern and other apps speak in your voices",
-            "start_server.bat", "app.server", "server_port", 8890, "/ui"),
+            "server", "app.server", "server_port", 8890, "/ui"),
     Program("3", "Speak", "type something and hear it in one of your voices",
-            "start_speak.bat", "app.speak", "speak_port", 7861),
+            "speak", "app.speak", "speak_port", 7861),
 )
+
+
+def find_program(word: str) -> Program | None:
+    """The program for "studio", "server" or "speak" (or its number in the menu)."""
+    word = (word or "").strip().lower()
+    return next((p for p in PROGRAMS if word in (p.word, p.key)), None)
 
 
 def address(program: Program, settings: dict) -> tuple[str, int]:
@@ -112,7 +125,7 @@ def start_program(program: Program) -> subprocess.Popen:
     """Run the program in a window of its own, so this menu stays usable."""
     if os.name == "nt":
         return subprocess.Popen(
-            ["cmd.exe", "/c", program.bat], cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE
+            ["cmd.exe", "/c", LAUNCHER, program.word], cwd=ROOT, creationflags=subprocess.CREATE_NEW_CONSOLE
         )
     return subprocess.Popen([sys.executable, "-m", program.module], cwd=ROOT, start_new_session=True)
 
@@ -270,7 +283,52 @@ def wait_for_key(menu: Menu, screen: str) -> str:
             next_check = time.monotonic() + REFRESH_S
 
 
-def main() -> int:
+def set_title(title: str) -> None:
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleTitleW(title)
+        except Exception:
+            pass
+
+
+def run(program: Program, args: list[str]) -> int:
+    """Run one program in this window, as if started with python -m (its module).
+    Returns its exit code. An error shows its traceback and ends with exit code 1."""
+    import runpy
+
+    set_title(f"Qwen3-TTS {program.name}")
+    sys.argv = [program.module, *args]
+    try:
+        runpy.run_module(program.module, run_name="__main__", alter_sys=True)
+    except SystemExit as exc:
+        if exc.code is None or isinstance(exc.code, int):
+            return exc.code or 0
+        print(exc.code, file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
+USAGE = f"""Start Qwen3-TTS Studio's menu, or one program without it:
+
+    {LAUNCHER}                the menu: it asks which program to start
+    {LAUNCHER} studio         the Voice Studio
+    {LAUNCHER} server         the Voice Server (add --engine gguf or --engine full to pick the model)
+    {LAUNCHER} speak          Speak
+"""
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args:
+        program = find_program(args[0])
+        if program is None:
+            print(f"There's no program called {args[0]!r}.\n\n{USAGE}")
+            return 2
+        return run(program, args[1:])
     menu = Menu()
     menu.check_for_updates()
     try:

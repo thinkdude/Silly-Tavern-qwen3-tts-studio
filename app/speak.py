@@ -1,6 +1,6 @@
 """Speak: type what you want said, pick one of your saved voices, and hear it.
 
-Start it with start_speak.bat (or `python -m app.speak`). It speaks with either
+Start it from the Qwen3-TTS.bat menu (or `Qwen3-TTS.bat speak`). It speaks with either
 voice model:
   * full: Qwen3-TTS itself. When the voice server is already running with the
     full model it does the speaking, so the model isn't loaded onto the GPU
@@ -37,7 +37,7 @@ EARLIER_LINES = 10
 # How long to trust the last "is the voice server running?" answer. Windows can take
 # a second to refuse a connection, so it isn't asked before every line.
 SERVER_CHECK_S = 10
-NO_VOICE = "Pick a voice first. No voices yet? Make one in the Voice Studio (start_studio.bat), then click Refresh voices."
+NO_VOICE = "Pick a voice first. No voices yet? Make one in the Voice Studio (1 in the Qwen3-TTS menu), then click Refresh voices."
 PREF_DEFAULTS = {"voice": None, "language": VOICE_DEFAULT_LANG, "speed": 1.0, "format": "wav"}
 ENGINES = gguf.MODEL_CHOICES
 

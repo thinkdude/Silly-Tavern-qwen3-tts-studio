@@ -49,7 +49,7 @@ Open the **Qwen3-TTS Studio** shortcut (or `Qwen3-TTS.bat` in the install folder
 
 Each program opens in its own window and in your browser. Keep its window open while you use it, and close the window to stop it. The menu shows which programs are running: picking one that's already running just opens its page again. Closing the menu leaves the programs running.
 
-You can still start the programs directly with `start_studio.bat`, `start_server.bat` and `start_speak.bat` in the install folder.
+To start one program directly, without the menu (for a shortcut of your own, say), run `Qwen3-TTS.bat studio`, `Qwen3-TTS.bat server` or `Qwen3-TTS.bat speak`.
 
 ### Updating
 
@@ -95,7 +95,7 @@ Most people never need these. Run them from a command prompt in the install fold
 
 ## Make voices: Voice Studio
 
-Press **1** in the menu (or run `start_studio.bat`). The Studio opens in your browser at http://127.0.0.1:7860. The first action in each tab takes a little longer while the model loads.
+Press **1** in the menu (or run `Qwen3-TTS.bat studio`). The Studio opens in your browser at http://127.0.0.1:7860. The first action in each tab takes a little longer while the model loads.
 
 **Design a voice.** Write a description: age, gender, pitch, pace, mood, accent. The model reads the *sample line* in that voice. Generate 2 to 4 takes, keep your favourite, name it and save. The saved take becomes the voice's reference clip, so the voice sounds the same every time you use it.
 
@@ -115,7 +115,7 @@ The clip lands in **Reference clip** and the transcript in the box under it. Lis
 
 ## Type and listen: Speak
 
-Press **3** in the menu (or run `start_speak.bat`). Speak opens in your browser at http://127.0.0.1:7861. Pick one of your saved voices, type what you want to hear and press **Enter** (or click **Speak**). **Shift+Enter** starts a new line, and long text is fine.
+Press **3** in the menu (or run `Qwen3-TTS.bat speak`). Speak opens in your browser at http://127.0.0.1:7861. Pick one of your saved voices, type what you want to hear and press **Enter** (or click **Speak**). **Shift+Enter** starts a new line, and long text is fine.
 
 - The line plays straight away and is saved in the `outputs` folder, named after the voice and its first few words. Choose **wav** or **mp3** under **Save as**; the download button on each player saves another copy wherever you like.
 - Your last ten lines stay on the page under **Earlier** so you can play them again.
@@ -159,7 +159,7 @@ Then click **Reload** and pick a voice for each character.
 
 ## Or use the Voice Server
 
-Press **2** in the menu (or run `start_server.bat`). The server runs at **http://127.0.0.1:8890** and opens its control panel at http://127.0.0.1:8890/ui. Keep the window open while you use it. It loads the voice model at startup so the first line plays without a long wait.
+Press **2** in the menu (or run `Qwen3-TTS.bat server`). The server runs at **http://127.0.0.1:8890** and opens its control panel at http://127.0.0.1:8890/ui. Keep the window open while you use it. It loads the voice model at startup so the first line plays without a long wait.
 
 ### Full model or GGUF
 
@@ -172,7 +172,7 @@ SillyTavern's settings are the same for both, so you can switch at any time with
 
 **Compare them.** On the **Test** tab, pick a voice, type a line and click **Compare the full and GGUF models**. You get the same line from each model side by side, with how long each took. Every take comes out a little different, so try a few lines before you decide. Afterwards only the model you picked stays loaded.
 
-To start the server on one model without opening the panel, run `start_server.bat --engine gguf` (or `--engine full`).
+To start the server on one model without opening the panel, run `Qwen3-TTS.bat server --engine gguf` (or `--engine full`).
 
 ### SillyTavern
 
@@ -293,8 +293,8 @@ To use the 0.6B clone model on purpose, set `"clone_model": "Qwen/Qwen3-TTS-12Hz
 
 ```
 Qwen3TTS\                 (wherever you installed it)
-  Qwen3-TTS.bat           the menu
-  install.bat, start_studio.bat, start_server.bat, start_speak.bat
+  Qwen3-TTS.bat           the menu (Qwen3-TTS.bat studio, server or speak starts one directly)
+  install.bat             installs, updates or repairs (6 in the menu does the same)
   app\                    the Studio, server, Speak and engine code
   voices\                 your saved voices (one folder each: voice.json + reference.wav)
   koboldcpp_voices\       copies of your voices for KoboldCpp (one .wav per voice)

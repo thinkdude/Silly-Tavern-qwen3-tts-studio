@@ -13,7 +13,8 @@ It speaks with either voice model, picked with the control panel's switch:
   * gguf: the small GGUF model, run by KoboldCpp (see gguf.py).
 SillyTavern's settings are the same for both.
 
-Start it with start_server.bat (or `python -m app.server`, `--engine gguf` to pick GGUF).
+Start it from the Qwen3-TTS.bat menu, or with `Qwen3-TTS.bat server` (`--engine gguf` to pick
+GGUF), or `python -m app.server`.
 """
 
 from __future__ import annotations

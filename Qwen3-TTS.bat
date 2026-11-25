@@ -1,6 +1,9 @@
 @echo off
 rem Qwen3-TTS Studio: installs everything the first time, then opens the menu that
-rem starts the Voice Studio, the Voice Server and Speak.
+rem asks which program to start: the Voice Studio, the Voice Server or Speak.
+rem
+rem   Qwen3-TTS.bat studio | server | speak   starts one of them right here, without
+rem                                           the menu (server --engine gguf works too)
 setlocal EnableExtensions
 cd /d "%~dp0"
 title Qwen3-TTS Studio
@@ -12,6 +15,7 @@ if not exist "%~dp0scripts\install.ps1" goto :not_extracted
 rem This copy was installed into another folder, so open that one.
 if exist "%~dp0.installed-to.txt" goto :moved
 if not exist "%~dp0.venv\Scripts\python.exe" goto :install
+if not "%~1"=="" goto :program
 
 "%~dp0.venv\Scripts\python.exe" -m app.menu
 set "CODE=%ERRORLEVEL%"
@@ -20,6 +24,14 @@ if "%CODE%"=="0" exit /b 0
 echo.
 echo   The menu stopped with an error, shown above. Running install.bat again
 echo   usually fixes it.
+echo.
+pause
+exit /b %CODE%
+
+:program
+rem One program in this window. The menu starts each one like this, in a window of its own.
+"%~dp0.venv\Scripts\python.exe" -m app.menu %*
+set "CODE=%ERRORLEVEL%"
 echo.
 pause
 exit /b %CODE%
@@ -46,7 +58,7 @@ set "TARGET="
 set /p TARGET=<"%~dp0.installed-to.txt"
 if not defined TARGET goto :stale
 if not exist "%TARGET%\Qwen3-TTS.bat" goto :stale
-call "%TARGET%\Qwen3-TTS.bat"
+call "%TARGET%\Qwen3-TTS.bat" %*
 exit /b %ERRORLEVEL%
 
 :stale

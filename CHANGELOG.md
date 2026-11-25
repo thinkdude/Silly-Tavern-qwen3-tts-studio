@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3 (2026-11-25)
+
+- **One file starts everything.** `start_studio.bat`, `start_server.bat` and `start_speak.bat` are gone. Double-click `Qwen3-TTS.bat` and it asks which program to start. To start one directly (for a shortcut of your own), run `Qwen3-TTS.bat studio`, `Qwen3-TTS.bat server` or `Qwen3-TTS.bat speak`; `Qwen3-TTS.bat server --engine gguf` works as before. Updating removes the old start files.
+
 ## 1.0.2 (2026-11-25)
 
 - **SillyTavern set up for you.** On the Voice Server's **Connect SillyTavern** tab, pick SillyTavern's folder (it's usually found for you) and click **Fill in SillyTavern's settings**. That turns on SillyTavern's text-to-speech, points it at the Voice Server and fills in your voices, so there's nothing to copy. A copy of SillyTavern's old settings is kept, and if SillyTavern is open you're reminded to reload its page.

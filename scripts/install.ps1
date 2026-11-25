@@ -171,6 +171,14 @@ function Write-Marker([string]$dest) {
     $enc = if ($cp -eq 65001) { New-Object Text.UTF8Encoding $false } else { [Text.Encoding]::GetEncoding($cp) }
     [IO.File]::WriteAllText((Join-Path $Root '.installed-to.txt'), $dest + "`r`n", $enc)
 }
+function Remove-OldLaunchers([string]$dir) {
+    # Up to 1.0.2 each program had a start_*.bat of its own. Qwen3-TTS.bat starts them all
+    # now (Qwen3-TTS.bat studio, server or speak starts one directly), so updating removes them.
+    foreach ($name in 'start_studio.bat', 'start_server.bat', 'start_speak.bat') {
+        $old = Join-Path $dir $name
+        if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue }
+    }
+}
 function Copy-AppTo([string]$dest) {
     Step "Copying Qwen3-TTS Studio to $dest"
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
@@ -184,6 +192,7 @@ function Copy-AppTo([string]$dest) {
     }
     & robocopy $Root $dest /XF settings.json .installed-to.txt @opts | Out-Null
     if ($LASTEXITCODE -ge 8) { Fail "Copying to $dest failed (robocopy code $LASTEXITCODE)." }
+    Remove-OldLaunchers $dest
     $ErrorActionPreference = 'Stop'
 }
 
@@ -257,6 +266,7 @@ if ($target -and -not (Same-Dir $target $Root)) {
 }
 
 Write-Host "Install folder: $Root"
+Remove-OldLaunchers $Root
 
 # Files extracted from a downloaded ZIP are marked as coming from the internet, which
 # makes Windows ask before every start. They're installed now, so drop that mark.

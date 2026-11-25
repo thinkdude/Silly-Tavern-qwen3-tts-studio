@@ -69,9 +69,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           & "$t\.venv\Scripts\python.exe" -c "from app import menu; m = menu.Menu(); m.refresh(); print(m.render())"
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          foreach ($old in 'start_studio.bat', 'start_server.bat', 'start_speak.bat') {
+            if (Test-Path (Join-Path $t $old)) { throw "$old is in the install; Qwen3-TTS.bat starts everything now" }
+          }
+          # A name after Qwen3-TTS.bat skips the menu and starts that program; an unknown one lists the choices.
+          $out = cmd /c "$t\Qwen3-TTS.bat nothing <nul" | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 2 -or $out -notmatch 'Qwen3-TTS.bat server') { throw "Qwen3-TTS.bat nothing: exit code $code" }
 
       - name: Install again (an update), which skips what's already installed
         run: |
+          # A start file from before 1.0.3, which updating removes.
+          Set-Content -Path "$env:TARGET\start_server.bat" -Value '@echo old'
           # cmd does the redirecting, so the installer's progress on stderr isn't treated as an error here.
           cmd /c "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install.ps1 -Yes -Cpu -SkipModels -InstallDir %TARGET% > again.log 2>&1"
           $code = $LASTEXITCODE
@@ -79,6 +89,7 @@ jobs:
           Write-Host $log
           if ($code -ne 0) { exit $code }
           if (-not (Test-Path "$env:TARGET\settings.json")) { throw 'settings.json is gone' }
+          if (Test-Path "$env:TARGET\start_server.bat") { throw 'The old start_server.bat is still there' }
           foreach ($expected in 'PyTorch 2.8.0+cpu is already installed', 'already installed; only updates are fetched') {
             if ($log -notmatch [regex]::Escape($expected)) { throw "The second run didn't say: $expected" }
           }

@@ -1,7 +1,7 @@
 """Voice Studio: design voices from a description, clone voices from a clip,
 and try out the voices you've saved.
 
-Start it with start_studio.bat (or `python -m app.studio`).
+Start it from the Qwen3-TTS.bat menu (or `Qwen3-TTS.bat studio`).
 """
 
 from __future__ import annotations

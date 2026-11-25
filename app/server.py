@@ -57,6 +57,9 @@ class SpeechRequest(BaseModel):
     language: str | None = None
     # OpenAI's style instructions. The clone model can't follow them, so they're ignored.
     instructions: str | None = None
+    # Not part of OpenAI's API: read the text as it is, in this one voice, with no notes skipped
+    # (Speak sends this; it's what you typed, not a role-play reply).
+    plain: bool = False
 
 
 class Backend:
@@ -144,7 +147,7 @@ def create_app(
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     app.state.log = deque(maxlen=50)
     backend = app.state.backend = Backend(engine, settings, kobold)
-    people = app.state.people = speakers.PeopleVoices(settings, library.ids, save_people)
+    people = app.state.people = speakers.PeopleVoices(settings, library.ids, save_people, find=library.get)
     # SillyTavern sends a reply a paragraph at a time, so this one remembers an open block of notes.
     reader = app.state.reader = speakers.Reader(settings, library, people)
     app.state.st_sync = sillytavern.AutoSync(settings, library)
@@ -195,9 +198,14 @@ def create_app(
         if not req.input.strip():
             raise HTTPException(400, "The input text is empty.")
         speed = min(max(req.speed, 0.25), 4.0)
+        # Everyone in a reply speaks its language: the one asked for, else the requested voice's.
+        language = req.language or v.language
         status = "ok"
         try:
-            read = reader.read(req.input, v, lambda words, who: backend.speak(words, who, language=req.language, speed=speed, model=model))
+            if req.plain:
+                read = backend.speak(req.input, v, language=req.language, speed=speed, model=model)
+            else:
+                read = reader.read(req.input, v, lambda words, who: backend.speak(words, who, language=language, speed=speed, model=model))
             if read is None:  # only notes: a moment of silence, so the app just moves on
                 wav, sr = speakers.silence()
                 status = "skipped (notes)"
@@ -324,7 +332,9 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
                 bool(settings.get("sillytavern_paragraphs", True)),
                 label="Speak long replies a paragraph at a time",
                 info="SillyTavern sends each paragraph on its own, so the first one plays while the next is being made, "
-                "instead of waiting for the whole reply. Turns on its two 'Narrate by paragraphs' options.",
+                "instead of waiting for the whole reply. Turns on its 'Narrate by paragraphs' options. With notes "
+                "skipped or people in their own voices (People's voices tab), it starts once the reply is written, "
+                "so each line arrives whole.",
             )
             st_auto = gr.Checkbox(
                 bool(settings.get("sillytavern_auto_sync", True)),
@@ -476,10 +486,13 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
         def st_fill_in(folder, paragraphs, auto):
             root = sillytavern.find_install(folder)
             ids = library.ids()
+            per_person = bool(settings.get("voices_per_person", True))
             result = sillytavern.apply(
                 root, ids, endpoint=f"{base_url}/v1/audio/speech", paragraphs=paragraphs,
-                per_person=bool(settings.get("voices_per_person", True)),
+                per_person=per_person, line_by_line=per_person or bool(settings.get("skip_notes", True)),
             )
+            if per_person:  # the voices SillyTavern gives its characters, for when they talk
+                people.seed(sillytavern.character_voices(root, ids))
             # Remember it all, keeping any other edits made to settings.json meanwhile.
             changes = {"sillytavern_dir": str(root), "sillytavern_paragraphs": bool(paragraphs), "sillytavern_auto_sync": bool(auto)}
             settings.update(changes)

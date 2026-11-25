@@ -265,20 +265,55 @@ def current_voices(path: Path) -> list[str] | None:
 _MULTI_VOICE_KEY = re.compile(r'^(?P<name>.+) \((?P<part>"Quotes"|\*Text inside asterisks\*|Other text)\)$')
 
 
+# What SillyTavern's voice map uses for "the default voice" and "don't read this".
+_MARKERS = ("[Default Voice]", "disabled")
+
+
+def _multi_voices(vmap: dict) -> dict[str, dict[str, str]]:
+    """{name: {part: voice}} from a voice map's multi-voice keys, real voices only."""
+    found: dict[str, dict[str, str]] = {}
+    for key, voice in vmap.items():
+        m = _MULTI_VOICE_KEY.match(str(key))
+        if m and voice and voice not in _MARKERS:
+            found.setdefault(m["name"], {})[m["part"]] = voice
+    return found
+
+
 def _plain_voices(section: dict) -> None:
     """Give each character that only has multi-voice voices a voice of its own, which
     SillyTavern needs once multi-voice is off: its narration voice (Other text) first."""
     vmap = section.get("voiceMap")
     if not isinstance(vmap, dict):
         return
-    best: dict[str, tuple[int, str]] = {}
-    rank = {"Other text": 0, '"Quotes"': 1, "*Text inside asterisks*": 2}
-    for key, voice in vmap.items():
-        m = _MULTI_VOICE_KEY.match(str(key))
-        if m and voice and (m["name"] not in best or rank[m["part"]] < best[m["name"]][0]):
-            best[m["name"]] = (rank[m["part"]], voice)
-    for name, (_, voice) in best.items():
-        vmap.setdefault(name, voice)
+    for name, parts in _multi_voices(vmap).items():
+        voice = parts.get("Other text") or parts.get('"Quotes"') or parts.get("*Text inside asterisks*")
+        if vmap.get(name) in (None, "", "[Default Voice]"):
+            vmap[name] = voice
+
+
+def character_voices(root: Path, voice_ids: list[str]) -> dict[str, str]:
+    """The voice SillyTavern gives each character's lines: its multi-voice "Quotes" voice, else
+    its own voice. A nickname in quotes in a card's name gets it too: Wade 'Mace' Callahan -> Mace."""
+    voices: dict[str, str] = {}
+    for path in settings_files(root):
+        try:
+            tts = _tts(_read(path), path, create=False) or {}
+        except SillyTavernError:
+            continue
+        vmap = (tts.get(PROVIDER) or {}).get("voiceMap")
+        if not isinstance(vmap, dict):
+            continue
+        multi = _multi_voices(vmap)
+        names = {str(k) for k in vmap if not _MULTI_VOICE_KEY.match(str(k)) and k not in _MARKERS} | set(multi)
+        for name in names:
+            if name == "User" or name.startswith("["):
+                continue
+            voice = multi.get(name, {}).get('"Quotes"') or vmap.get(name)
+            if voice in voice_ids:
+                voices[name] = voice
+                for nick in re.findall(r"['\"\u201c\u2018]([A-Z][\w-]+)['\"\u201d\u2019]", name):
+                    voices.setdefault(nick, voice)
+    return voices
 
 
 def apply(
@@ -289,6 +324,7 @@ def apply(
     model: str = MODEL_NAME,
     paragraphs: bool | None = None,
     per_person: bool | None = None,
+    line_by_line: bool | None = None,
 ) -> Result:
     """Update SillyTavern's settings files.
 
@@ -298,6 +334,9 @@ def apply(
     which would send quotes and narration as separate pieces: the voice server then gets whole
     paragraphs, works out who says each line itself, and reads narration in the character's
     voice (taken from that character's multi-voice "Other text" voice when it has no plain one).
+    With `line_by_line` (and `paragraphs`), SillyTavern waits for the finished reply and sends it
+    one line at a time, instead of streaming chunks: SillyTavern joins a chunk's lines with spaces,
+    which would hide where a note line ends and the story starts.
     Without one (keeping the list up to date): only the voice list, and only where the
     OpenAI Compatible provider is already set up.
     A file is written (with a backup) only when something in it actually changes.
@@ -318,7 +357,7 @@ def apply(
             tts["enabled"] = True
             tts["currentProvider"] = PROVIDER
             if paragraphs is not None:
-                tts["periodic_auto_generation"] = bool(paragraphs)
+                tts["periodic_auto_generation"] = bool(paragraphs) and not line_by_line
                 tts["narrate_by_paragraphs"] = bool(paragraphs)
             if not isinstance(section, dict):
                 section = tts[PROVIDER] = {}
@@ -504,6 +543,7 @@ def main(argv: list[str] | None = None) -> int:
         result = apply(
             root, voices, endpoint=f"http://127.0.0.1:{port_}/v1/audio/speech", paragraphs=not args.no_paragraphs,
             per_person=bool(settings.get("voices_per_person", True)),
+            line_by_line=bool(settings.get("voices_per_person", True) or settings.get("skip_notes", True)),
         )
     except (SillyTavernError, OSError) as exc:
         print(f"!! {exc}")

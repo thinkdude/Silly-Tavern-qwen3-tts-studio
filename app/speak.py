@@ -155,7 +155,8 @@ class Speaker:
         return wav, sr, "full"
 
     def _via_server(self, voice_id: str, text: str, language: str | None, speed: float) -> tuple[np.ndarray, int]:
-        body = {"input": text, "voice": voice_id, "response_format": "wav", "speed": speed}
+        # plain: what you typed is read as it is, in the voice you picked (no role-play reading rules).
+        body = {"input": text, "voice": voice_id, "response_format": "wav", "speed": speed, "plain": True}
         if language:
             body["language"] = language
         req = urllib.request.Request(

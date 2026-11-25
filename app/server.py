@@ -5,6 +5,9 @@ with a small control panel.
     GET  /v1/audio/voices   the saved voices
     GET  /ui                control panel (status, model switch, SillyTavern settings, test box, request log)
 
+The control panel can fill in SillyTavern's TTS settings by itself (see sillytavern.py) and
+keep its voice list up to date as voices are saved or deleted.
+
 It speaks with either voice model, picked with the control panel's switch:
   * full: Qwen3-TTS itself (best quality).
   * gguf: the small GGUF model, run by KoboldCpp (see gguf.py).
@@ -28,7 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
-from . import audio, gguf
+from . import audio, gguf, sillytavern
 from .config import load_settings, save_settings, setup_environment
 from .engine import OutOfMemory, TTSEngine
 from .voices import Voice, VoiceLibrary
@@ -121,6 +124,7 @@ def create_app(engine: TTSEngine, library: VoiceLibrary, settings: dict, kobold:
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
     app.state.log = deque(maxlen=50)
     backend = app.state.backend = Backend(engine, settings, kobold)
+    app.state.st_sync = sillytavern.AutoSync(settings, library)
 
     def check_key(authorization: str | None = Header(default=None)):
         key = (settings.get("api_key") or "").strip()
@@ -223,6 +227,38 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
     def refresh():
         return status_md(), st_voices(), voice_table(), list(app.state.log)
 
+    st_sync: sillytavern.AutoSync = app.state.st_sync
+
+    def st_folder_value() -> str:
+        """The saved folder, else one found in the usual places (saved once Fill in is clicked)."""
+        saved = settings.get("sillytavern_dir") or ""
+        if saved:
+            return saved
+        try:
+            found = sillytavern.guess_installs()
+        except Exception:
+            found = []
+        return str(found[0]) if found else ""
+
+    def st_status() -> str:
+        folder = settings.get("sillytavern_dir") or ""
+        if not folder:
+            return ""
+        try:
+            root = sillytavern.find_install(folder)
+            files = sillytavern.settings_files(root)
+        except Exception as exc:
+            return f"Couldn't check SillyTavern's settings: {exc}"
+        ids = library.ids()
+        lists = [sillytavern.current_voices(f) for f in files]
+        if lists and all(v is not None and sorted(v) == sorted(ids) for v in lists):
+            msg = f"SillyTavern has your {len(ids)} voice{'s' if len(ids) != 1 else ''}."
+        else:
+            msg = "SillyTavern's voice list differs from yours. Click **Fill in SillyTavern's settings** to update it."
+        if st_sync.note:
+            msg += " " + st_sync.note
+        return msg
+
     with gr.Blocks(title="Qwen3-TTS Voice Server", theme=gr.themes.Soft()) as panel:
         gr.Markdown("# Qwen3-TTS Voice Server\nKeep this window open while SillyTavern (or any app) uses your voices.")
         status = gr.Markdown(status_md())
@@ -239,15 +275,44 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
 
         with gr.Tab("Connect SillyTavern"):
             gr.Markdown(
-                "In SillyTavern open **Extensions → TTS**, choose **OpenAI Compatible** as the provider, tick **Enabled**, "
-                "and copy these values in. Then map each character to a voice under the voice list."
+                "Pick SillyTavern's folder and click **Fill in SillyTavern's settings**. That turns on SillyTavern's "
+                "text-to-speech, points it at this server and fills in your voices, so there's nothing to copy."
             )
-            gr.Textbox(f"{base_url}/v1/audio/speech", label="Provider Endpoint", show_copy_button=True, interactive=False)
-            gr.Textbox(MODEL_NAME, label="Model", show_copy_button=True, interactive=False)
-            st_box = gr.Textbox(st_voices(), label="Available Voices (comma separated)", show_copy_button=True, interactive=False)
-            gr.Markdown("Made a new voice in the Studio? Click **Refresh** and paste the updated voice list into SillyTavern.")
+            with gr.Row(equal_height=True):
+                st_dir = gr.Textbox(
+                    st_folder_value(),
+                    label="SillyTavern folder",
+                    placeholder=r"For example D:\SillyTavern (the folder with Start.bat in it)",
+                    scale=4,
+                )
+                st_browse = gr.Button("Browse…", scale=1, min_width=120)
+            st_paragraphs = gr.Checkbox(
+                bool(settings.get("sillytavern_paragraphs", True)),
+                label="Speak long replies a paragraph at a time",
+                info="SillyTavern sends each paragraph on its own, so the first one plays while the next is being made, "
+                "instead of waiting for the whole reply. Turns on its two 'Narrate by paragraphs' options.",
+            )
+            st_auto = gr.Checkbox(
+                bool(settings.get("sillytavern_auto_sync", True)),
+                label="Keep SillyTavern's voice list up to date",
+                info="When you save or delete a voice in the Studio, this server updates SillyTavern's list by itself.",
+            )
+            st_fill = gr.Button("Fill in SillyTavern's settings", variant="primary")
+            st_note = gr.Markdown(st_status())
+            with gr.Accordion("Or copy the settings in by hand", open=False):
+                gr.Markdown(
+                    "In SillyTavern open **Extensions → TTS**, choose **OpenAI Compatible** as the provider, tick **Enabled**, "
+                    "and copy these values in. Then map each character to a voice under the voice list."
+                )
+                gr.Textbox(f"{base_url}/v1/audio/speech", label="Provider Endpoint", show_copy_button=True, interactive=False)
+                gr.Textbox(MODEL_NAME, label="Model", show_copy_button=True, interactive=False)
+                st_box = gr.Textbox(st_voices(), label="Available Voices (comma separated)", show_copy_button=True, interactive=False)
+                gr.Markdown("Made a new voice in the Studio? Click **Refresh** and paste the updated voice list into SillyTavern.")
             if settings.get("api_key"):
-                gr.Markdown("An API key is set in settings.json, so also enter it in SillyTavern's API key field.")
+                gr.Markdown(
+                    "An API key is set in settings.json, so also enter it in SillyTavern (the **API Key** button next to "
+                    "Provider Endpoint). Fill in doesn't copy keys."
+                )
 
         with gr.Tab("Voices"):
             table = gr.Dataframe(voice_table(), headers=["id (use this in apps)", "name", "type", "language"], interactive=False)
@@ -333,6 +398,37 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
                 )
             return "Now the full model speaks. It's loading in the background."
 
+        @friendly
+        def st_pick(current):
+            picked = sillytavern.browse(current)
+            return picked if picked else gr.update()
+
+        @friendly
+        def st_fill_in(folder, paragraphs, auto):
+            root = sillytavern.find_install(folder)
+            ids = library.ids()
+            result = sillytavern.apply(root, ids, endpoint=f"{base_url}/v1/audio/speech", paragraphs=paragraphs)
+            # Remember it all, keeping any other edits made to settings.json meanwhile.
+            changes = {"sillytavern_dir": str(root), "sillytavern_paragraphs": bool(paragraphs), "sillytavern_auto_sync": bool(auto)}
+            settings.update(changes)
+            saved = load_settings()
+            saved.update(changes)
+            save_settings(saved)
+            st_sync.note = ""
+            return str(root), sillytavern.describe(result, ids)
+
+        def st_auto_changed(auto):
+            if settings.get("sillytavern_dir"):  # before the first Fill in, the button saves it
+                settings["sillytavern_auto_sync"] = bool(auto)
+                saved = load_settings()
+                saved["sillytavern_auto_sync"] = bool(auto)
+                save_settings(saved)
+
+        # Waiting on the folder picker shouldn't hold up anything else, so it skips the one-at-a-time queue.
+        st_browse.click(st_pick, [st_dir], [st_dir], concurrency_limit=None)
+        st_fill.click(st_fill_in, [st_dir, st_paragraphs, st_auto], [st_dir, st_note])
+        st_auto.input(st_auto_changed, [st_auto], None)
+
         outputs = [status, st_box, table, log]
         # Afterwards, show the model actually in use (it stays the same when switching failed).
         model.input(switch_model, [model], [model_note]).then(lambda: gr.update(value=backend.choice), None, model).then(
@@ -342,6 +438,7 @@ def build_panel(library: VoiceLibrary, settings: dict, app: FastAPI, base_url: s
         load_btn.click(friendly(lambda: backend.preload()), None, None).then(refresh, None, outputs)
         unload_btn.click(lambda: backend.free(), None, None).then(refresh, None, outputs)
         panel.load(lambda: gr.update(value=backend.choice), None, model)
+        panel.load(st_status, None, st_note)
         gr.Timer(5).tick(refresh, None, outputs)
 
     return panel
@@ -385,6 +482,8 @@ def main() -> None:
 
     if not args.no_preload:
         threading.Thread(target=backend.warm_up, daemon=True).start()
+    # Keeps SillyTavern's voice list up to date, once its folder is set in the control panel.
+    threading.Thread(target=api.state.st_sync.run, daemon=True).start()
     if not args.no_browser:
         threading.Timer(2.0, lambda: webbrowser.open(f"{base_url}/ui")).start()
 
